@@ -25,16 +25,18 @@ type Model struct {
 	err         error
 	status      string
 
-	home             HomeScreen
-	createCluster    CreateClusterScreen
-	dashboard        DashboardScreen
-	commanderBuilder CommanderBuilderScreen
-	crewManager      CrewManagerScreen
-	newTask          NewTaskScreen
-	commanderReview  CommanderReviewScreen
-	executionView    ExecutionViewScreen
-	diffReview       DiffReviewScreen
-	configEditor     ConfigEditorScreen
+	home               HomeScreen
+	createCluster      CreateClusterScreen
+	dashboard          DashboardScreen
+	commanderDashboard CommanderDashboardScreen
+	commanderBuilder   CommanderBuilderScreen
+	commanderChat      CommanderChatScreen
+	crewManager        CrewManagerScreen
+	newTask            NewTaskScreen
+	commanderReview    CommanderReviewScreen
+	executionView      ExecutionViewScreen
+	diffReview         DiffReviewScreen
+	configEditor       ConfigEditorScreen
 }
 
 // ---------------------------------------------------------------------------
@@ -53,16 +55,18 @@ func NewModel(a *app.App) Model {
 		help:   NewHelpModel(keys, styles),
 		screen: ScreenHome,
 
-		home:             NewHomeScreen(a, styles),
-		createCluster:    NewCreateClusterScreen(a, styles),
-		dashboard:        NewDashboardScreen(a, styles),
-		commanderBuilder: NewCommanderBuilderScreen(a, styles),
-		crewManager:      NewCrewManagerScreen(a, styles),
-		newTask:          NewNewTaskScreen(a, styles),
-		commanderReview:  NewCommanderReviewScreen(a, styles),
-		executionView:    NewExecutionViewScreen(a, styles),
-		diffReview:       NewDiffReviewScreen(a, styles),
-		configEditor:     NewConfigEditorScreen(a, styles),
+		home:               NewHomeScreen(a, styles),
+		createCluster:      NewCreateClusterScreen(a, styles),
+		dashboard:          NewDashboardScreen(a, styles),
+		commanderDashboard: NewCommanderDashboardScreen(a, styles),
+		commanderBuilder:   NewCommanderBuilderScreen(a, styles),
+		commanderChat:      NewCommanderChatScreen(a, styles),
+		crewManager:        NewCrewManagerScreen(a, styles),
+		newTask:            NewNewTaskScreen(a, styles),
+		commanderReview:    NewCommanderReviewScreen(a, styles),
+		executionView:      NewExecutionViewScreen(a, styles),
+		diffReview:         NewDiffReviewScreen(a, styles),
+		configEditor:       NewConfigEditorScreen(a, styles),
 	}
 }
 
@@ -70,11 +74,12 @@ func NewModel(a *app.App) Model {
 // tea.Model interface
 // ---------------------------------------------------------------------------
 
-// Init returns the initial command: enter alt screen and load the home screen.
+// Init returns the initial command: enter alt screen and load the initial screen.
 func (m Model) Init() tea.Cmd {
+	initCmd := m.home.init()
 	return tea.Batch(
 		tea.EnterAltScreen,
-		m.home.init(),
+		initCmd,
 	)
 }
 
@@ -131,6 +136,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		// Inject current dimensions into the newly active screen so it renders
+		// immediately without waiting for the next terminal resize event.
+		if m.width > 0 && m.height > 0 {
+			if sizeCmd := m.updateActiveScreen(tea.WindowSizeMsg{Width: m.width, Height: m.height}); sizeCmd != nil {
+				cmds = append(cmds, sizeCmd)
+			}
+		}
 		return m, tea.Batch(cmds...)
 
 	case NavigateBackMsg:
@@ -145,7 +157,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = ScreenHome
 			cmds = append(cmds, m.home.init())
 		}
+		// Re-inject dimensions into the screen we're returning to.
+		if m.width > 0 && m.height > 0 {
+			if sizeCmd := m.updateActiveScreen(tea.WindowSizeMsg{Width: m.width, Height: m.height}); sizeCmd != nil {
+				cmds = append(cmds, sizeCmd)
+			}
+		}
 		return m, tea.Batch(cmds...)
+
+	case WebServerStartedMsg:
+		m.status = fmt.Sprintf("Web GUI running at %s", msg.URL)
+		return m, nil
+
+	case WebServerErrorMsg:
+		m.err = msg.Err
+		return m, nil
 
 	case ErrorMsg:
 		m.err = msg.Err
@@ -159,12 +185,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenDashboard
 		m.status = "Cluster opened"
 		cmds = append(cmds, m.dashboard.Init())
+		if m.width > 0 && m.height > 0 {
+			cmds = append(cmds, m.updateActiveScreen(tea.WindowSizeMsg{Width: m.width, Height: m.height}))
+		}
 		return m, tea.Batch(cmds...)
 
 	case ClusterInitDoneMsg:
 		m.screen = ScreenDashboard
 		m.status = "Cluster created"
 		cmds = append(cmds, m.dashboard.Init())
+		if m.width > 0 && m.height > 0 {
+			cmds = append(cmds, m.updateActiveScreen(tea.WindowSizeMsg{Width: m.width, Height: m.height}))
+		}
 		return m, tea.Batch(cmds...)
 	}
 
@@ -218,8 +250,12 @@ func (m *Model) initScreen(screen Screen, data any) tea.Cmd {
 		return nil
 	case ScreenDashboard:
 		return m.dashboard.Init()
+	case ScreenCommanderDashboard:
+		return m.commanderDashboard.Init()
 	case ScreenCommanderBuilder:
 		return m.commanderBuilder.Init()
+	case ScreenCommanderChat:
+		return m.commanderChat.Init()
 	case ScreenCrewManager:
 		return m.crewManager.Init()
 	case ScreenNewTask:
@@ -268,8 +304,12 @@ func (m *Model) updateActiveScreen(msg tea.Msg) tea.Cmd {
 		return m.createCluster.Update(msg)
 	case ScreenDashboard:
 		return m.dashboard.Update(msg)
+	case ScreenCommanderDashboard:
+		return m.commanderDashboard.Update(msg)
 	case ScreenCommanderBuilder:
 		return m.commanderBuilder.Update(msg)
+	case ScreenCommanderChat:
+		return m.commanderChat.Update(msg)
 	case ScreenCrewManager:
 		return m.crewManager.Update(msg)
 	case ScreenNewTask:
@@ -302,8 +342,12 @@ func (m *Model) viewActiveScreen(width, height int) string {
 		return m.createCluster.View(width, height)
 	case ScreenDashboard:
 		return m.dashboard.View(width, height)
+	case ScreenCommanderDashboard:
+		return m.commanderDashboard.View(width, height)
 	case ScreenCommanderBuilder:
 		return m.commanderBuilder.View(width, height)
+	case ScreenCommanderChat:
+		return m.commanderChat.View(width, height)
 	case ScreenCrewManager:
 		return m.crewManager.View(width, height)
 	case ScreenNewTask:

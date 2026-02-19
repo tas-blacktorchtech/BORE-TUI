@@ -58,6 +58,17 @@ func New() *App {
 	return &App{}
 }
 
+// KnownClusters returns the known cluster paths from the global state file.
+// Safe to call before any cluster is opened.
+func (a *App) KnownClusters() []string {
+	return loadGlobalState().KnownClusters
+}
+
+// LastCluster returns the last opened cluster path, or "" if none.
+func (a *App) LastCluster() string {
+	return loadGlobalState().LastCluster
+}
+
 // Close cleanly shuts down all resources.
 func (a *App) Close() error {
 	var errs []error

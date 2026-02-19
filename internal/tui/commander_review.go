@@ -155,12 +155,93 @@ func (s CommanderReviewScreen) Update(msg tea.Msg) (CommanderReviewScreen, tea.C
 
 	case tea.KeyMsg:
 		return s.handleKey(msg)
+
+	case tea.MouseMsg:
+		return s.handleMouse(msg)
 	}
 
 	// Forward to viewport if scrolling.
 	var cmd tea.Cmd
 	s.viewport, cmd = s.viewport.Update(msg)
 	return s, cmd
+}
+
+func (s CommanderReviewScreen) handleMouse(msg tea.MouseMsg) (CommanderReviewScreen, tea.Cmd) {
+	if s.loading {
+		return s, nil
+	}
+
+	// Scroll wheel: forward to viewport for steps with scrollable content.
+	if tea.MouseEvent(msg).IsWheel() {
+		var cmd tea.Cmd
+		s.viewport, cmd = s.viewport.Update(msg)
+		return s, cmd
+	}
+
+	// Only handle left-button press for clicks.
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return s, nil
+	}
+
+	switch s.step {
+	case 0:
+		// Clarifications: click on an answer input to focus it.
+		// Layout: header(~2 lines) + task(~2) + title(1) + blank(1) = ~6 lines before first question.
+		// Each question block: question(1) + why(1) + input(1) + blank(1) = 4 lines.
+		if len(s.answerInputs) > 0 {
+			// Approximate the Y offset where question blocks start.
+			contentStart := 6
+			idx := (msg.Y - contentStart) / 4
+			if idx >= 0 && idx < len(s.answerInputs) {
+				s.answerInputs[s.clarFocus].Blur()
+				s.clarFocus = idx
+				s.answerInputs[s.clarFocus].Focus()
+			}
+		}
+
+	case 1:
+		// Options: click on an option to select it.
+		// Layout: header(~2) + task(~2) + title(1) + blank(1) = ~6 lines before options.
+		// Each option takes variable lines; approximate with the rendered content.
+		if len(s.options.Options) > 0 {
+			contentStart := 6
+			y := msg.Y - contentStart
+			if y >= 0 {
+				// Estimate lines per option: title(1) + summary(1) + steps + risks + blank(1).
+				runningY := 0
+				for i, opt := range s.options.Options {
+					lines := 2 // title + summary
+					lines += len(opt.ApproachSteps)
+					lines += len(opt.Risks)
+					if len(opt.ApproachSteps) > 0 {
+						lines++ // "Steps:" label
+					}
+					if len(opt.Risks) > 0 {
+						lines++ // "Risks:" label
+					}
+					lines++ // blank line after option
+					if y >= runningY && y < runningY+lines {
+						s.selectedOption = i
+						break
+					}
+					runningY += lines
+				}
+			}
+		}
+
+	case 2:
+		// Branch select: click on a branch to move cursor.
+		// Layout: header(~2) + task(~2) + title(1) + blank(1) = ~6 lines before branch list.
+		if len(s.branches) > 0 {
+			contentStart := 6
+			idx := msg.Y - contentStart
+			if idx >= 0 && idx < len(s.branches) {
+				s.branchCursor = idx
+			}
+		}
+	}
+
+	return s, nil
 }
 
 func (s CommanderReviewScreen) handleKey(msg tea.KeyMsg) (CommanderReviewScreen, tea.Cmd) {
@@ -560,11 +641,16 @@ func buildCommanderContext(ctx context.Context, a *app.App) (agents.CommanderCon
 		return agents.CommanderContext{}, fmt.Errorf("list lessons: %w", err)
 	}
 
+	// Task history: all tasks with their boss summarizer outcomes.
+	taskHistory, err := a.DB().ListTaskHistories(ctx, clusterID)
+	if err != nil {
+		return agents.CommanderContext{}, fmt.Errorf("list task histories: %w", err)
+	}
+
 	// Gather recent agent runs from the most recent executions in this cluster.
 	var pastRuns []db.AgentRun
 	executions, err := a.DB().ListExecutions(ctx, clusterID)
 	if err == nil {
-		// Take runs from up to the 5 most recent executions.
 		limit := 5
 		if len(executions) < limit {
 			limit = len(executions)
@@ -578,11 +664,12 @@ func buildCommanderContext(ctx context.Context, a *app.App) (agents.CommanderCon
 	}
 
 	return agents.CommanderContext{
-		Brain:    brain,
-		Crews:    crews,
-		Threads:  threads,
-		PastRuns: pastRuns,
-		Lessons:  lessons,
+		Brain:       brain,
+		Crews:       crews,
+		Threads:     threads,
+		TaskHistory: taskHistory,
+		PastRuns:    pastRuns,
+		Lessons:     lessons,
 	}, nil
 }
 

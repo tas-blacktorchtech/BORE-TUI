@@ -183,6 +183,8 @@ func (a *App) OpenCluster(ctx context.Context, repoPath string) error {
 
 	logs.System.Info("app: cluster opened: %s (id=%d)", cluster.Name, cluster.ID)
 
+	_ = addKnownCluster(absPath) // best-effort, ignore error
+
 	return nil
 }
 

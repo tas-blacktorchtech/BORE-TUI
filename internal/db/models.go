@@ -27,7 +27,7 @@ func ValidComplexity(s string) bool { return validComplexities[s] }
 // ---------------------------------------------------------------------------
 
 const (
-	ModeJustGetItDone  = "just_get_it_done"
+	ModeJustGetItDone   = "just_get_it_done"
 	ModeAlertWithIssues = "alert_with_issues"
 )
 
@@ -45,12 +45,12 @@ func ValidMode(s string) bool { return validModes[s] }
 // ---------------------------------------------------------------------------
 
 const (
-	StatusPending    = "pending"
-	StatusReview     = "review"
-	StatusRunning    = "running"
-	StatusDiffReview = "diff_review"
-	StatusCompleted  = "completed"
-	StatusFailed     = "failed"
+	StatusPending     = "pending"
+	StatusReview      = "review"
+	StatusRunning     = "running"
+	StatusDiffReview  = "diff_review"
+	StatusCompleted   = "completed"
+	StatusFailed      = "failed"
 	StatusInterrupted = "interrupted"
 )
 
@@ -154,39 +154,39 @@ type CommanderMemory struct {
 
 // Crew defines a specialized agent team with constraints and ownership rules.
 type Crew struct {
-	ID              int64
-	ClusterID       int64
-	Name            string
-	Objective       string
-	Constraints     string
-	AllowedCommands string
-	OwnershipPaths  string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID              int64     `json:"id"`
+	ClusterID       int64     `json:"cluster_id"`
+	Name            string    `json:"name"`
+	Objective       string    `json:"objective"`
+	Constraints     string    `json:"constraints"`
+	AllowedCommands string    `json:"allowed_commands"`
+	OwnershipPaths  string    `json:"ownership_paths"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Thread groups related tasks under a named context within a cluster.
 type Thread struct {
-	ID          int64
-	ClusterID   int64
-	Name        string
-	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          int64     `json:"id"`
+	ClusterID   int64     `json:"cluster_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Task represents a unit of work assigned within a thread.
 type Task struct {
-	ID         int64
-	ClusterID  int64
-	ThreadID   int64
-	Title      string
-	Prompt     string
-	Complexity string // basic, medium, complex
-	Mode       string // just_get_it_done, alert_with_issues
-	Status     string // pending, review, running, diff_review, completed, failed, interrupted
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID         int64     `json:"id"`
+	ClusterID  int64     `json:"cluster_id"`
+	ThreadID   int64     `json:"thread_id"`
+	Title      string    `json:"title"`
+	Prompt     string    `json:"prompt"`
+	Complexity string    `json:"complexity"`
+	Mode       string    `json:"mode"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // TaskReview captures review phase data for a task.
@@ -200,41 +200,41 @@ type TaskReview struct {
 
 // Execution tracks a single run of a task, potentially by a crew.
 type Execution struct {
-	ID           int64
-	TaskID       int64
-	ClusterID    int64
-	CrewID       *int64
-	BaseBranch   string
-	ExecBranch   string
-	WorktreePath string
-	Status       string // pending, review, running, diff_review, completed, failed, interrupted
-	StartedAt    *time.Time
-	FinishedAt   *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           int64      `json:"id"`
+	TaskID       int64      `json:"task_id"`
+	ClusterID    int64      `json:"cluster_id"`
+	CrewID       *int64     `json:"crew_id"`
+	BaseBranch   string     `json:"base_branch"`
+	ExecBranch   string     `json:"exec_branch"`
+	WorktreePath string     `json:"worktree_path"`
+	Status       string     `json:"status"`
+	StartedAt    *time.Time `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // ExecutionEvent is a timestamped log entry for an execution.
 type ExecutionEvent struct {
-	ID          int64
-	ExecutionID int64
-	Ts          time.Time
-	Level       string // debug, info, warn, error
-	EventType   string
-	Message     string
+	ID          int64     `json:"id"`
+	ExecutionID int64     `json:"execution_id"`
+	Ts          time.Time `json:"ts"`
+	Level       string    `json:"level"`
+	EventType   string    `json:"event_type"`
+	Message     string    `json:"message"`
 }
 
 // AgentRun records one agent invocation within an execution.
 type AgentRun struct {
-	ID           int64
-	ExecutionID  int64
-	AgentType    string // boss, worker
-	Role         string
-	Prompt       string
-	Summary      string
-	Outcome      string // success, partial, failed
-	FilesChanged string
-	CreatedAt    time.Time
+	ID           int64     `json:"id"`
+	ExecutionID  int64     `json:"execution_id"`
+	AgentType    string    `json:"agent_type"`
+	Role         string    `json:"role"`
+	Prompt       string    `json:"prompt"`
+	Summary      string    `json:"summary"`
+	Outcome      string    `json:"outcome"`
+	FilesChanged string    `json:"files_changed"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // AgentLesson captures a lesson learned during an agent run.

@@ -9,11 +9,12 @@ import (
 
 // CommanderContext holds all the dynamic data injected into a Commander prompt.
 type CommanderContext struct {
-	Brain    []db.CommanderMemory
-	Crews    []db.Crew
-	Threads  []db.Thread
-	PastRuns []db.AgentRun
-	Lessons  []db.AgentLesson
+	Brain        []db.CommanderMemory
+	Crews        []db.Crew
+	Threads      []db.Thread
+	TaskHistory  []db.TaskHistoryEntry
+	PastRuns     []db.AgentRun
+	Lessons      []db.AgentLesson
 }
 
 // BuildCommanderSystemPrompt returns the Commander's system prompt with injected context.
@@ -36,9 +37,11 @@ Constraints:
 - You must produce structured outputs exactly in the requested formats.
 `)
 
+	writeDefaultKnowledge(&b)
 	writeBrainSection(&b, ctx.Brain)
 	writeCrewsSection(&b, ctx.Crews)
 	writeThreadsSection(&b, ctx.Threads)
+	writeTaskHistorySection(&b, ctx.TaskHistory)
 	writePastRunsSection(&b, ctx.PastRuns)
 	writeLessonsSection(&b, ctx.Lessons)
 	writeCommanderOutputFormats(&b)
@@ -163,15 +166,46 @@ Respond with ONLY the following JSON (no markdown fences, no extra text):
 	return b.String()
 }
 
+func writeDefaultKnowledge(b *strings.Builder) {
+	b.WriteString(`
+## BORE System Architecture (Always Apply)
+
+**Agent Hierarchy:**
+- Commander (you) → Boss → Workers
+- Commander: intake, planning, review. Never edits code or runs commands.
+- Boss: plans and delegates worker tasks. Never edits code. One Boss per execution.
+- Workers: edit files, run commands in git worktrees.
+
+**Escalation Chain:**
+- Worker questions → Boss
+- Boss cannot answer → Commander
+- Commander cannot answer → escalate to user (pause execution)
+
+**Persistent Memory:**
+- After every execution, Boss and Worker summaries are stored in the database.
+- Always review past runs and lessons in your context before planning new tasks.
+- Reference specific past runs when relevant to the current task.
+
+**Execution Rules:**
+- Every task must have exactly one Boss.
+- Workers operate in isolated git worktrees (one branch per execution).
+- Never approve work without a diff review step.
+- Complexity determines worker budget: basic=low, medium=medium, complex=high.
+`)
+}
+
 func writeBrainSection(b *strings.Builder, brain []db.CommanderMemory) {
-	b.WriteString("\n## Commander Brain (Persistent Memory)\n\n")
-	if len(brain) == 0 {
-		b.WriteString("No persistent memory entries.\n")
-		return
-	}
+	b.WriteString("\n## Project Brain (Custom Context)\n\n")
 	for _, m := range brain {
-		fmt.Fprintf(b, "- **%s**: %s\n", m.Key, m.Value)
+		if m.Key == "__brain__" {
+			if strings.TrimSpace(m.Value) != "" {
+				b.WriteString(m.Value)
+				b.WriteByte('\n')
+			}
+			return
+		}
 	}
+	b.WriteString("No project brain defined yet.\n")
 }
 
 func writeCrewsSection(b *strings.Builder, crews []db.Crew) {
@@ -204,6 +238,29 @@ func writeThreadsSection(b *strings.Builder, threads []db.Thread) {
 	}
 	for _, t := range threads {
 		fmt.Fprintf(b, "- **%s**: %s\n", t.Name, t.Description)
+	}
+}
+
+func writeTaskHistorySection(b *strings.Builder, history []db.TaskHistoryEntry) {
+	b.WriteString("\n## Task History\n\n")
+	b.WriteString("These are all tasks that have been requested in this cluster, most recent first.\n\n")
+	if len(history) == 0 {
+		b.WriteString("No tasks yet.\n")
+		return
+	}
+	for _, t := range history {
+		fmt.Fprintf(b, "### [%s] %s\n", strings.ToUpper(t.Status), t.Title)
+		fmt.Fprintf(b, "**Request:** %s\n", t.Prompt)
+		if t.Outcome != "" {
+			fmt.Fprintf(b, "**Outcome:** %s\n", t.Outcome)
+		}
+		if t.WhatChanged != "" {
+			fmt.Fprintf(b, "**Summary:** %s\n", t.WhatChanged)
+		}
+		if t.FilesChanged != "" {
+			fmt.Fprintf(b, "**Files touched:** %s\n", t.FilesChanged)
+		}
+		b.WriteByte('\n')
 	}
 }
 
@@ -249,4 +306,70 @@ The three formats are:
 2. **Options** (type: "options") -- proposing 2-3 execution approaches
 3. **Execution Brief** (type: "execution_brief") -- the final plan for the Boss agent
 `)
+}
+
+// ---------------------------------------------------------------------------
+// Commander Chat
+// ---------------------------------------------------------------------------
+
+// ChatMessage represents a single turn in the Commander chat history.
+type ChatMessage struct {
+	Role    string // "user" or "commander"
+	Content string
+}
+
+// BuildCommanderChatSystemPrompt builds the system prompt for Commander chat mode.
+// Chat mode is conversational: no structured JSON output required.
+func BuildCommanderChatSystemPrompt(ctx CommanderContext) string {
+	var b strings.Builder
+
+	b.WriteString(`You are **Commander**, the top-level orchestrator for a repo-centric local engineering system called **bore-tui**.
+
+You are in **chat mode** — answer the user's questions conversationally and helpfully.
+You have full access to the cluster context below: brain, crews, threads, task history, past agent runs, and lessons learned.
+
+## Critical rules for chat mode
+
+- When the user asks about "past tasks", "last question", "what have we done", "previous work", "task history" or anything similar — look in the **Task History** section of your context. That is the authoritative record of every request the user has submitted to BORE. Treat task titles and prompts as the user's prior "questions" or "requests".
+- The conversational chat history (shown in ## Conversation History below) only covers the current chat session. It does NOT represent the full history of the user's interactions with BORE — the Task History section does.
+- Be specific: reference actual task titles, outcomes, and file changes from the Task History when answering questions about past work.
+- If the Task History is empty, say so clearly.
+- Do NOT output JSON. Respond in plain text (markdown formatting is fine).
+- Be concise but thorough.
+`)
+
+	writeDefaultKnowledge(&b)
+	writeBrainSection(&b, ctx.Brain)
+	writeCrewsSection(&b, ctx.Crews)
+	writeThreadsSection(&b, ctx.Threads)
+	writeTaskHistorySection(&b, ctx.TaskHistory)
+	writePastRunsSection(&b, ctx.PastRuns)
+	writeLessonsSection(&b, ctx.Lessons)
+
+	return b.String()
+}
+
+// BuildCommanderChatMessage builds the user-turn prompt containing the full
+// conversation history followed by the new user message. Because the Claude CLI
+// is invoked fresh for each turn, history is embedded in the prompt itself.
+func BuildCommanderChatMessage(history []ChatMessage, newMessage string) string {
+	var b strings.Builder
+
+	if len(history) > 0 {
+		b.WriteString("## Conversation History\n\n")
+		for _, m := range history {
+			switch m.Role {
+			case "user":
+				fmt.Fprintf(&b, "[User]: %s\n\n", m.Content)
+			case "commander":
+				fmt.Fprintf(&b, "[Commander]: %s\n\n", m.Content)
+			}
+		}
+	}
+
+	b.WriteString("## Current Message\n\n")
+	b.WriteString(newMessage)
+	b.WriteString("\n\nPlease respond to the current message above.")
+
+	return b.String()
 }

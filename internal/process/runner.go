@@ -46,7 +46,7 @@ type RunResult struct {
 func (r *Runner) Run(ctx context.Context, workDir string, prompt string, env []string, onStdout func(line string), onStderr func(line string)) *RunResult {
 	// TODO: consider passing --output-format json if Claude CLI supports it,
 	// to ensure structured output instead of relying on extractLastJSON.
-	args := []string{"-p"}
+	args := []string{"-p", "--dangerously-skip-permissions"}
 	if r.model != "" {
 		args = append(args, "--model", r.model)
 	}

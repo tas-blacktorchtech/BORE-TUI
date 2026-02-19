@@ -3,13 +3,15 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"bore-tui/internal/agents"
 	"bore-tui/internal/app"
-	"bore-tui/internal/db"
 	"bore-tui/internal/theme"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,73 +20,85 @@ import (
 // Internal message types
 // ---------------------------------------------------------------------------
 
-// memoriesLoadedMsg is sent when the memory list has been fetched from the DB.
-type memoriesLoadedMsg struct {
-	Memories []db.CommanderMemory
-}
+// brainLoadedMsg is sent when the brain text has been fetched from the DB.
+type brainLoadedMsg struct{ text string }
 
-// memorySavedMsg is sent after a memory entry has been persisted.
-type memorySavedMsg struct{}
+// brainScanDoneMsg is sent when the Claude CLI repo scan completes.
+type brainScanDoneMsg struct{ text string }
 
-// memoryDeletedMsg is sent after a memory entry has been deleted.
-type memoryDeletedMsg struct{ Key string }
+// brainSavedMsg is sent after the brain text has been persisted to the DB.
+type brainSavedMsg struct{}
+
+// scanLineMsg carries a single line of live scan output from the Claude CLI.
+type scanLineMsg struct{ line string }
+
+// ---------------------------------------------------------------------------
+// Spinner frames (no external dependency needed)
+// ---------------------------------------------------------------------------
+
+var brainSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // ---------------------------------------------------------------------------
 // CommanderBuilderScreen
 // ---------------------------------------------------------------------------
 
-// CommanderBuilderScreen provides a list + editor interface for the
-// commander's key-value "brain" memory stored in the database.
+// CommanderBuilderScreen is a full-screen textarea editor for the Commander
+// brain — a freeform text blob that is injected into every Commander session
+// for the current cluster.
 type CommanderBuilderScreen struct {
 	app    *app.App
 	styles theme.Styles
 
-	memories []db.CommanderMemory
-	cursor   int
+	textarea  textarea.Model
+	brainText string // last saved value (used to detect unsaved changes)
 
-	editing    bool
-	creating   bool
-	deleting   bool
-	deleteKey  string
-	keyInput   textinput.Model
-	valueInput textinput.Model
-	focus      int // 0=key, 1=value
+	scanning  bool     // true while Claude CLI is running the repo scan
+	scanLines []string // live output lines captured during scan
 
-	width, height int
-	loaded        bool
-	statusMsg     string
+	loaded    bool
+	statusMsg string
+	err       error
+
+	spinnerIdx int
+	width      int
+	height     int
 }
 
 // NewCommanderBuilderScreen creates a CommanderBuilderScreen ready for use.
 func NewCommanderBuilderScreen(a *app.App, s theme.Styles) CommanderBuilderScreen {
-	ki := textinput.New()
-	ki.Placeholder = "Key"
-	ki.CharLimit = 128
-	ki.Width = 40
-
-	vi := textinput.New()
-	vi.Placeholder = "Value"
-	vi.CharLimit = 1024
-	vi.Width = 60
+	ta := textarea.New()
+	ta.Placeholder = "Commander brain text will appear here after scanning..."
+	ta.ShowLineNumbers = false
+	ta.SetWidth(80)
+	ta.SetHeight(20)
 
 	return CommanderBuilderScreen{
-		app:        a,
-		styles:     s,
-		keyInput:   ki,
-		valueInput: vi,
+		app:      a,
+		styles:   s,
+		textarea: ta,
 	}
 }
 
-// Init returns the command to load all memory entries.
+// Init is called when navigating to this screen. It checks whether a brain
+// already exists in the DB and either loads it or triggers a fresh scan.
 func (c *CommanderBuilderScreen) Init() tea.Cmd {
-	return c.loadMemories()
+	// Reset transient state on every navigation.
+	c.loaded = false
+	c.statusMsg = ""
+	c.err = nil
+	c.scanning = false
+	c.scanLines = nil
+	c.spinnerIdx = 0
+	c.textarea.Focus()
+
+	return c.loadBrainFromDB()
 }
 
 // ---------------------------------------------------------------------------
 // Update
 // ---------------------------------------------------------------------------
 
-// Update handles messages and key events for the commander builder.
+// Update handles messages and key events for the commander brain editor.
 func (c *CommanderBuilderScreen) Update(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -93,326 +107,362 @@ func (c *CommanderBuilderScreen) Update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		c.width = msg.Width
 		c.height = msg.Height
+		c.resizeTextarea()
 
-	case memoriesLoadedMsg:
-		c.memories = msg.Memories
-		c.loaded = true
-		if c.cursor >= len(c.memories) && len(c.memories) > 0 {
-			c.cursor = len(c.memories) - 1
+	case TickMsg:
+		if c.scanning {
+			c.spinnerIdx = (c.spinnerIdx + 1) % len(brainSpinnerFrames)
 		}
 
-	case memorySavedMsg:
-		c.editing = false
-		c.creating = false
-		c.statusMsg = "Saved"
-		cmds = append(cmds, c.loadMemories())
+	case brainLoadedMsg:
+		c.loaded = true
+		if msg.text == "" {
+			// Brain is empty — trigger a fresh repo scan.
+			cmds = append(cmds, c.startScan())
+		} else {
+			c.brainText = msg.text
+			c.textarea.SetValue(msg.text)
+			c.textarea.Focus()
+		}
 
-	case memoryDeletedMsg:
-		c.deleting = false
-		c.statusMsg = fmt.Sprintf("Deleted key %q", msg.Key)
-		cmds = append(cmds, c.loadMemories())
+	case brainScanDoneMsg:
+		c.scanning = false
+		c.scanLines = nil
+		c.brainText = msg.text
+		c.textarea.SetValue(msg.text)
+		c.textarea.Focus()
+		// Auto-save the scanned brain to DB.
+		cmds = append(cmds, c.saveBrain(msg.text))
+
+	case brainSavedMsg:
+		c.brainText = c.textarea.Value()
+		c.statusMsg = "Saved"
+
+	case scanLineMsg:
+		if len(c.scanLines) > 6 {
+			c.scanLines = c.scanLines[len(c.scanLines)-6:]
+		}
+		c.scanLines = append(c.scanLines, msg.line)
 
 	case ErrorMsg:
-		c.statusMsg = fmt.Sprintf("Error: %v", msg.Err)
+		c.scanning = false
+		c.err = msg.Err
+		c.statusMsg = fmt.Sprintf("tui: commander brain: %v", msg.Err)
+
+	case tea.MouseMsg:
+		if !c.scanning {
+			switch {
+			case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+				c.textarea.Focus()
+				// Manually position cursor since bubbles/textarea has no mouse support.
+				// Textarea starts at Y=3: header(1) + subtitle(1) + blank(1).
+				const textareaStartY = 3
+				targetRow := msg.Y - textareaStartY
+				if targetRow < 0 {
+					targetRow = 0
+				}
+				delta := targetRow - c.textarea.Line()
+				for i := 0; i < delta; i++ {
+					c.textarea.CursorDown()
+				}
+				for i := 0; i > delta; i-- {
+					c.textarea.CursorUp()
+				}
+				c.textarea.SetCursor(msg.X)
+
+			case msg.Button == tea.MouseButtonWheelUp:
+				c.textarea.CursorUp()
+
+			case msg.Button == tea.MouseButtonWheelDown:
+				c.textarea.CursorDown()
+			}
+		}
 
 	case tea.KeyMsg:
-		// Delete confirmation mode.
-		if c.deleting {
-			switch msg.String() {
-			case "y", "Y":
-				cmds = append(cmds, c.deleteMemory(c.deleteKey))
-			case "n", "N", "esc":
-				c.deleting = false
-			}
-			return tea.Batch(cmds...)
+		if c.scanning {
+			// No key actions while scanning (except ctrl+c which is global).
+			return nil
 		}
 
-		// Editing or creating mode — delegate to form handler.
-		if c.editing || c.creating {
-			return c.updateForm(msg)
-		}
-
-		// List mode.
 		switch msg.String() {
-		case "up", "k":
-			if len(c.memories) > 0 {
-				c.cursor = (c.cursor - 1 + len(c.memories)) % len(c.memories)
-			}
-		case "down", "j":
-			if len(c.memories) > 0 {
-				c.cursor = (c.cursor + 1) % len(c.memories)
-			}
-		case "a":
-			c.creating = true
-			c.keyInput.SetValue("")
-			c.valueInput.SetValue("")
-			c.focus = 0
-			c.keyInput.Focus()
-			c.valueInput.Blur()
+		case "ctrl+s":
 			c.statusMsg = ""
-		case "enter", "e":
-			if c.cursor < len(c.memories) {
-				m := c.memories[c.cursor]
-				c.editing = true
-				c.keyInput.SetValue(m.Key)
-				c.valueInput.SetValue(m.Value)
-				c.focus = 1
-				c.keyInput.Blur()
-				c.valueInput.Focus()
-				c.statusMsg = ""
-			}
-		case "d":
-			if c.cursor < len(c.memories) {
-				c.deleting = true
-				c.deleteKey = c.memories[c.cursor].Key
-			}
+			cmds = append(cmds, c.saveBrain(c.textarea.Value()))
+			return tea.Batch(cmds...)
+
+		case "ctrl+r":
+			c.statusMsg = ""
+			c.err = nil
+			cmds = append(cmds, c.startScan())
+			return tea.Batch(cmds...)
+
 		case "esc":
 			return func() tea.Msg { return NavigateBackMsg{} }
-		case "r":
-			cmds = append(cmds, c.loadMemories())
 		}
+
+		// Delegate all other keys to the textarea.
+		var taCmd tea.Cmd
+		c.textarea, taCmd = c.textarea.Update(msg)
+		cmds = append(cmds, taCmd)
 	}
 
 	return tea.Batch(cmds...)
-}
-
-// updateForm handles key events when in the editing or creating state.
-func (c *CommanderBuilderScreen) updateForm(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "tab", "shift+tab":
-		if c.focus == 0 {
-			c.focus = 1
-			c.keyInput.Blur()
-			c.valueInput.Focus()
-		} else {
-			c.focus = 0
-			c.valueInput.Blur()
-			c.keyInput.Focus()
-		}
-		return nil
-
-	case "esc":
-		c.editing = false
-		c.creating = false
-		return nil
-
-	case "enter":
-		key := strings.TrimSpace(c.keyInput.Value())
-		value := strings.TrimSpace(c.valueInput.Value())
-		if key == "" {
-			c.statusMsg = "Key cannot be empty"
-			return nil
-		}
-		return c.saveMemory(key, value)
-	}
-
-	// Delegate to the focused input.
-	var cmd tea.Cmd
-	if c.focus == 0 {
-		c.keyInput, cmd = c.keyInput.Update(msg)
-	} else {
-		c.valueInput, cmd = c.valueInput.Update(msg)
-	}
-	return cmd
 }
 
 // ---------------------------------------------------------------------------
 // View
 // ---------------------------------------------------------------------------
 
-// View renders the commander builder screen.
+// View renders the commander brain editor.
 func (c *CommanderBuilderScreen) View(width, height int) string {
 	c.width = width
 	c.height = height
 	if width == 0 {
 		return ""
 	}
+	c.resizeTextarea()
 
-	header := c.styles.Header.Width(width).Render(" Commander Brain Builder ")
+	// Header.
+	header := c.styles.Header.Width(width).Render(" Commander Brain ")
 
+	// Subtitle.
+	subtitle := lipgloss.NewStyle().
+		Foreground(theme.ColorTextSecondary).
+		PaddingLeft(2).
+		Render("This context is injected into every Commander session for this cluster.")
+
+	// Footer hint bar.
+	footerText := " [ctrl+s] save  [ctrl+r] re-scan  [esc] back "
+	if c.scanning {
+		footerText = " Scanning in progress... "
+	}
+	footer := c.styles.CommandBar.Width(width).Render(footerText)
+
+	// Main body area.
 	var body string
-	if c.deleting {
-		body = c.renderDeleteConfirmation()
-	} else if c.editing || c.creating {
-		body = c.renderForm()
+	if c.scanning {
+		body = c.renderScanView()
+	} else if !c.loaded {
+		body = lipgloss.NewStyle().
+			Foreground(theme.ColorTextSecondary).
+			PaddingLeft(4).
+			Render("Loading...")
 	} else {
-		body = c.renderList()
+		body = c.textarea.View()
 	}
 
-	// Status line.
+	// Status / error line.
 	statusLine := ""
-	if c.statusMsg != "" {
+	if c.err != nil {
 		statusLine = lipgloss.NewStyle().
-			Foreground(theme.ColorWarning).
+			Foreground(theme.ColorAccent).
+			Bold(true).
+			PaddingLeft(2).
+			Render(fmt.Sprintf("Error: %v", c.err))
+	} else if c.statusMsg != "" {
+		statusLine = lipgloss.NewStyle().
+			Foreground(theme.ColorSuccess).
 			PaddingLeft(2).
 			Render(c.statusMsg)
 	}
 
-	// Help bar.
-	var helpText string
-	if c.editing || c.creating {
-		helpText = " [tab] switch field  [enter] save  [esc] cancel "
-	} else {
-		helpText = " [a] add  [e/enter] edit  [d] delete  [r] refresh  [esc] back "
-	}
-	helpBar := c.styles.CommandBar.Width(width).Render(helpText)
-
-	parts := []string{header, "", body}
+	parts := []string{header, subtitle, "", body}
 	if statusLine != "" {
 		parts = append(parts, "", statusLine)
 	}
-	parts = append(parts, helpBar)
+	parts = append(parts, footer)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-// ---------------------------------------------------------------------------
-// Rendering helpers
-// ---------------------------------------------------------------------------
+// renderScanView renders the scanning progress overlay.
+func (c *CommanderBuilderScreen) renderScanView() string {
+	spinner := brainSpinnerFrames[c.spinnerIdx%len(brainSpinnerFrames)]
 
-func (c *CommanderBuilderScreen) renderList() string {
-	if !c.loaded {
-		return lipgloss.NewStyle().
-			Foreground(theme.ColorTextSecondary).
-			PaddingLeft(4).
-			Render("Loading...")
-	}
-
-	if len(c.memories) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(theme.ColorTextSecondary).
-			PaddingLeft(4).
-			Render("No brain entries defined. Press 'a' to add one.")
-	}
-
-	maxLines := c.height - 8
-	if maxLines < 1 {
-		maxLines = 1
-	}
-
-	var lines []string
-	for i, m := range c.memories {
-		if i >= maxLines {
-			break
-		}
-		keyStr := dashTruncate(m.Key, 24)
-		valStr := dashTruncate(m.Value, 50)
-		line := fmt.Sprintf("%-24s  %s", keyStr, valStr)
-
-		if i == c.cursor {
-			lines = append(lines, c.styles.ListItemSelected.Render(line))
-		} else {
-			lines = append(lines, c.styles.ListItem.Render(line))
-		}
-	}
-
-	countLabel := lipgloss.NewStyle().
-		Foreground(theme.ColorTextSecondary).
-		PaddingLeft(2).
-		Render(fmt.Sprintf("%d entries", len(c.memories)))
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		countLabel,
-		"",
-		lipgloss.JoinVertical(lipgloss.Left, lines...),
-	)
-}
-
-func (c *CommanderBuilderScreen) renderForm() string {
-	title := "Edit Memory Entry"
-	if c.creating {
-		title = "New Memory Entry"
-	}
-	titleLine := lipgloss.NewStyle().
+	spinnerLine := lipgloss.NewStyle().
 		Foreground(theme.ColorTextPrimary).
 		Bold(true).
 		PaddingLeft(4).
-		Render(title)
+		Render(fmt.Sprintf("%s  Scanning repository with Commander...", spinner))
 
-	keyStyle := c.styles.Input
-	valStyle := c.styles.Input
-	if c.focus == 0 {
-		keyStyle = c.styles.InputFocused
-	} else {
-		valStyle = c.styles.InputFocused
+	var liveLines []string
+	for _, line := range c.scanLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		rendered := lipgloss.NewStyle().
+			Foreground(theme.ColorTextSecondary).
+			PaddingLeft(6).
+			Render(line)
+		liveLines = append(liveLines, rendered)
 	}
 
-	keyLabel := lipgloss.NewStyle().
-		Foreground(theme.ColorTextSecondary).
-		PaddingLeft(4).
-		Render("Key:")
-	keyField := keyStyle.Render(c.keyInput.View())
-
-	valLabel := lipgloss.NewStyle().
-		Foreground(theme.ColorTextSecondary).
-		PaddingLeft(4).
-		Render("Value:")
-	valField := valStyle.Render(c.valueInput.View())
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		titleLine,
-		"",
-		keyLabel,
-		"    "+keyField,
-		"",
-		valLabel,
-		"    "+valField,
-	)
+	parts := []string{spinnerLine, ""}
+	parts = append(parts, liveLines...)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-func (c *CommanderBuilderScreen) renderDeleteConfirmation() string {
-	return lipgloss.NewStyle().
-		Foreground(theme.ColorAccent).
-		Bold(true).
-		PaddingLeft(4).
-		Render(fmt.Sprintf("Delete key %q? (y/n)", c.deleteKey))
+// ---------------------------------------------------------------------------
+// Layout helpers
+// ---------------------------------------------------------------------------
+
+// resizeTextarea adjusts the textarea dimensions to fill available space.
+// It accounts for: header (1) + subtitle (1) + blank (1) + statusLine (2) +
+// footer (1) = ~6 rows of chrome.
+func (c *CommanderBuilderScreen) resizeTextarea() {
+	if c.width == 0 || c.height == 0 {
+		return
+	}
+	const fixedRows = 7 // header + subtitle + blank + (optional status) + footer
+	taHeight := c.height - fixedRows
+	if taHeight < 4 {
+		taHeight = 4
+	}
+	taWidth := c.width - 4 // slight inset
+	if taWidth < 20 {
+		taWidth = 20
+	}
+	c.textarea.SetWidth(taWidth)
+	c.textarea.SetHeight(taHeight)
 }
 
 // ---------------------------------------------------------------------------
 // Data commands
 // ---------------------------------------------------------------------------
 
-func (c *CommanderBuilderScreen) loadMemories() tea.Cmd {
+// loadBrainFromDB fetches the brain text from the database and sends a
+// brainLoadedMsg. If the cluster is nil or the key does not exist, it sends
+// brainLoadedMsg{text: ""} which triggers a fresh scan.
+func (c *CommanderBuilderScreen) loadBrainFromDB() tea.Cmd {
 	a := c.app
 	return func() tea.Msg {
 		cluster := a.Cluster()
 		if cluster == nil {
-			return memoriesLoadedMsg{}
+			return brainLoadedMsg{text: ""}
 		}
-		memories, err := a.DB().GetAllMemory(context.Background(), cluster.ID)
+		text, err := a.DB().GetMemory(context.Background(), cluster.ID, "__brain__")
 		if err != nil {
-			return ErrorMsg{Err: err}
+			// A "not found" condition returns an empty string — treat it the
+			// same as missing; only hard errors are surfaced.
+			// GetMemory returns ("", sql.ErrNoRows) when the key is absent;
+			// we normalise that to an empty-string result here.
+			return brainLoadedMsg{text: ""}
 		}
-		return memoriesLoadedMsg{Memories: memories}
+		return brainLoadedMsg{text: text}
 	}
 }
 
-func (c *CommanderBuilderScreen) saveMemory(key, value string) tea.Cmd {
+// startScan initiates the Claude CLI repo scan. It sets scanning=true
+// immediately and returns a command that gathers repo context, builds the
+// prompt, runs the Claude CLI, and finishes with brainScanDoneMsg.
+func (c *CommanderBuilderScreen) startScan() tea.Cmd {
+	c.scanning = true
+	c.scanLines = nil
+	c.loaded = true // consider the screen loaded even during scan
+
 	a := c.app
 	return func() tea.Msg {
-		cluster := a.Cluster()
-		if cluster == nil {
-			return ErrorMsg{Err: fmt.Errorf("no cluster open")}
+		repo := a.Repo()
+		if repo == nil {
+			return ErrorMsg{Err: fmt.Errorf("tui: commander brain: no repository available")}
 		}
-		err := a.DB().SetMemory(context.Background(), cluster.ID, key, value)
-		if err != nil {
-			return ErrorMsg{Err: err}
+		repoPath := repo.Path
+		if repoPath == "" {
+			return ErrorMsg{Err: fmt.Errorf("tui: commander brain: no repository path available")}
 		}
-		return memorySavedMsg{}
+
+		// Gather top-level directory listing.
+		dirListing := gatherDirListing(repoPath)
+
+		// Read README.md if present.
+		readmeContent := readFileIfExists(filepath.Join(repoPath, "README.md"), 4096)
+
+		// Collect key config files.
+		keyFiles := gatherKeyFiles(repoPath)
+
+		prompt := agents.BuildRepoBrainScanPrompt(repoPath, dirListing, readmeContent, keyFiles)
+
+		// Run the Claude CLI. Because Bubble Tea commands must return a single
+		// tea.Msg, we accumulate all output and return it at once. The spinner
+		// gives live feedback while the process runs.
+		result := a.Runner().Run(
+			context.Background(),
+			repoPath,
+			prompt,
+			nil,
+			nil, // onStdout — no per-line streaming needed; spinner provides feedback
+			nil, // onStderr
+		)
+
+		if result.Err != nil {
+			return ErrorMsg{Err: fmt.Errorf("tui: commander brain: scan: %w", result.Err)}
+		}
+
+		text := strings.TrimSpace(result.Stdout)
+		return brainScanDoneMsg{text: text}
 	}
 }
 
-func (c *CommanderBuilderScreen) deleteMemory(key string) tea.Cmd {
+// gatherDirListing returns a newline-separated listing of top-level entries
+// in the given directory. Non-fatal: returns an empty string on error.
+func gatherDirListing(repoPath string) string {
+	entries, err := os.ReadDir(repoPath)
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			lines = append(lines, e.Name()+"/")
+		} else {
+			lines = append(lines, e.Name())
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// readFileIfExists reads up to maxBytes from the named file.
+// Returns an empty string if the file does not exist or cannot be read.
+func readFileIfExists(path string, maxBytes int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(data) > maxBytes {
+		data = data[:maxBytes]
+	}
+	return string(data)
+}
+
+// gatherKeyFiles reads well-known config files from the repo root and returns
+// a map of filename → content (truncated to 2 KB each).
+func gatherKeyFiles(repoPath string) map[string]string {
+	candidates := []string{
+		"go.mod", "package.json", "Cargo.toml", "pyproject.toml",
+		"requirements.txt", "Makefile", "Dockerfile", ".env.example",
+	}
+	result := make(map[string]string)
+	for _, name := range candidates {
+		content := readFileIfExists(filepath.Join(repoPath, name), 2048)
+		if content != "" {
+			result[name] = content
+		}
+	}
+	return result
+}
+
+// saveBrain persists the given text to the DB under the "__brain__" key.
+func (c *CommanderBuilderScreen) saveBrain(text string) tea.Cmd {
 	a := c.app
 	return func() tea.Msg {
 		cluster := a.Cluster()
 		if cluster == nil {
-			return ErrorMsg{Err: fmt.Errorf("no cluster open")}
+			return ErrorMsg{Err: fmt.Errorf("tui: commander brain: save: no cluster open")}
 		}
-		err := a.DB().DeleteMemory(context.Background(), cluster.ID, key)
+		err := a.DB().SetMemory(context.Background(), cluster.ID, "__brain__", text)
 		if err != nil {
-			return ErrorMsg{Err: err}
+			return ErrorMsg{Err: fmt.Errorf("tui: commander brain: save: %w", err)}
 		}
-		return memoryDeletedMsg{Key: key}
+		return brainSavedMsg{}
 	}
 }

@@ -284,12 +284,50 @@ func (s ExecutionViewScreen) Update(msg tea.Msg) (ExecutionViewScreen, tea.Cmd) 
 
 	case tea.KeyMsg:
 		return s.handleKey(msg)
+
+	case tea.MouseMsg:
+		return s.handleMouse(msg)
 	}
 
 	// Forward to viewport.
 	var cmd tea.Cmd
 	s.viewport, cmd = s.viewport.Update(msg)
 	return s, cmd
+}
+
+func (s ExecutionViewScreen) handleMouse(msg tea.MouseMsg) (ExecutionViewScreen, tea.Cmd) {
+	// Scroll wheel: forward to viewport.
+	if tea.MouseEvent(msg).IsWheel() {
+		var cmd tea.Cmd
+		s.viewport, cmd = s.viewport.Update(msg)
+		return s, cmd
+	}
+
+	// Only handle left-button press for clicks.
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return s, nil
+	}
+
+	// Tab bar click: tabs are at Y=0 (first rendered line inside the panel).
+	// Tab labels are " Overview ", " Output ", " Workers " (each padded with spaces).
+	// The panel has ~1 char left padding, so account for that.
+	if msg.Y <= 1 {
+		tabs := []string{"Overview", "Output", "Workers"}
+		x := msg.X - 1 // account for panel padding
+		cursor := 0
+		for i, tab := range tabs {
+			// Each tab renders as " <name> " so width = len(name) + 2.
+			tabWidth := len(tab) + 2
+			if x >= cursor && x < cursor+tabWidth {
+				s.tab = i
+				s.updateViewportContent()
+				return s, nil
+			}
+			cursor += tabWidth
+		}
+	}
+
+	return s, nil
 }
 
 func (s ExecutionViewScreen) handleKey(msg tea.KeyMsg) (ExecutionViewScreen, tea.Cmd) {

@@ -99,6 +99,9 @@ func (d *DashboardScreen) Update(msg tea.Msg) tea.Cmd {
 	case ExecutionsLoadedMsg:
 		d.executions = msg.Executions
 
+	case tea.MouseMsg:
+		return d.handleMouse(msg)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 
@@ -142,9 +145,9 @@ func (d *DashboardScreen) Update(msg tea.Msg) tea.Cmd {
 			return func() tea.Msg {
 				return NavigateMsg{Screen: ScreenCrewManager}
 			}
-		case "b":
+		case "x":
 			return func() tea.Msg {
-				return NavigateMsg{Screen: ScreenCommanderBuilder}
+				return NavigateMsg{Screen: ScreenCommanderDashboard}
 			}
 
 		// Clear filter or navigate back
@@ -328,13 +331,31 @@ func (d *DashboardScreen) handleEnter() tea.Cmd {
 			d.clampCenterCursor()
 		}
 	case 1:
-		// Center pane: select a task to show detail on right pane.
+		// Center pane: open the selected task in the appropriate screen.
 		filtered := d.filteredTasks()
-		if d.centerCursor < len(filtered) {
-			task := filtered[d.centerCursor]
-			d.selectedTask = &task
-			d.selectedExec = nil
-			d.updateDetailText()
+		if d.centerCursor >= len(filtered) {
+			return nil
+		}
+		task := filtered[d.centerCursor]
+		d.selectedTask = &task
+		d.selectedExec = nil
+		d.updateDetailText()
+
+		// If there are executions for this task, open the execution view.
+		taskExecs := d.executionsForTask(task.ID)
+		if len(taskExecs) > 0 {
+			exec := taskExecs[len(taskExecs)-1] // most recent
+			return func() tea.Msg {
+				return NavigateMsg{Screen: ScreenExecutionView, Data: &exec}
+			}
+		}
+
+		// If task is awaiting commander review, open commander review.
+		if task.Status == db.StatusPending || task.Status == db.StatusReview {
+			taskCopy := task
+			return func() tea.Msg {
+				return NavigateMsg{Screen: ScreenCommanderReview, Data: &taskCopy}
+			}
 		}
 	}
 	return nil
@@ -644,7 +665,7 @@ func (d *DashboardScreen) renderBottomBar(totalWidth int) string {
 	info := fmt.Sprintf(" %s | Tasks: %d | Exec: %d | Running: %d/%d ",
 		clusterName, len(d.tasks), execCount, runningCount, maxWorkers)
 
-	keys := " tab:pane  n:task  c:crews  b:brain  r:refresh "
+	keys := " tab:pane  n:task  c:crews  x:commander  r:refresh "
 
 	barStyle := d.styles.StatusBar.Width(totalWidth)
 
@@ -699,6 +720,103 @@ func (d *DashboardScreen) threadName(id int64) string {
 		}
 	}
 	return fmt.Sprintf("#%d", id)
+}
+
+// ---------------------------------------------------------------------------
+// Mouse handling
+// ---------------------------------------------------------------------------
+
+func (d *DashboardScreen) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	leftW := d.width / 4
+	rightW := d.width / 4
+	rightX := d.width - rightW
+
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		d.moveCursorUp()
+	case msg.Button == tea.MouseButtonWheelDown:
+		d.moveCursorDown()
+	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+		// Determine which pane was clicked.
+		if msg.X < leftW {
+			d.focusedPane = 0
+			d.handleLeftPaneClick(msg.X, msg.Y)
+		} else if msg.X >= rightX {
+			d.focusedPane = 2
+			d.handleRightPaneClick(msg.X-rightX, msg.Y)
+		} else {
+			d.focusedPane = 1
+			d.handleCenterPaneClick(msg.Y)
+		}
+	}
+	return nil
+}
+
+func (d *DashboardScreen) handleLeftPaneClick(x, y int) {
+	// Row 0-1 is the panel border/padding area; row ~2 is the tab row.
+	// Tabs render on roughly the 2nd content row (accounting for panel padding).
+	tabRow := 1
+	if y <= tabRow+1 {
+		// Click on tabs — estimate half-way split for "Crews" vs "Threads".
+		leftW := d.width / 4
+		mid := leftW / 2
+		if x < mid {
+			d.leftTab = 0
+			d.leftCursor = 0
+		} else {
+			d.leftTab = 1
+			d.leftCursor = 0
+		}
+		return
+	}
+
+	// Items start after tabs + blank line (~row 4 in the panel).
+	itemStart := 4
+	idx := y - itemStart
+	if idx < 0 {
+		return
+	}
+	n := d.leftListLen()
+	if n > 0 && idx < n {
+		d.leftCursor = idx
+	}
+}
+
+func (d *DashboardScreen) handleCenterPaneClick(y int) {
+	// Header + optional filter line + blank line; items start around row 4-5.
+	itemStart := 4
+	if d.filterThread != 0 {
+		itemStart = 5
+	}
+	idx := y - itemStart
+	if idx < 0 {
+		return
+	}
+	filtered := d.filteredTasks()
+	if len(filtered) > 0 && idx < len(filtered) {
+		d.centerCursor = idx
+		d.syncSelectedTask()
+	}
+}
+
+func (d *DashboardScreen) handleRightPaneClick(x, y int) {
+	// Tabs are on roughly row 2 inside the panel.
+	tabRow := 2
+	if y >= tabRow && y <= tabRow+1 {
+		// Three tabs: "Summary", "Logs", "Diff" — estimate equal thirds.
+		rightW := d.width / 4
+		third := rightW / 3
+		switch {
+		case x < third:
+			d.rightTab = 0
+		case x < 2*third:
+			d.rightTab = 1
+		default:
+			d.rightTab = 2
+		}
+		return
+	}
+	// Clicks elsewhere in right pane — no cursor to set; scroll via wheel.
 }
 
 // dashTruncate shortens s to maxLen characters, appending an ellipsis if needed.

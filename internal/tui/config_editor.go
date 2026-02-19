@@ -34,6 +34,8 @@ type ConfigEditorScreen struct {
 	input   textinput.Model
 	err     error
 	saved   bool
+	width   int
+	height  int
 }
 
 // NewConfigEditorScreen creates a new config editor screen.
@@ -118,6 +120,44 @@ func (s *ConfigEditorScreen) Update(msg tea.Msg) tea.Cmd {
 			return s.startEdit()
 		case msg.String() == "s":
 			return s.save()
+		}
+
+	case tea.MouseMsg:
+		if len(s.fields) == 0 {
+			return nil
+		}
+
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if !s.editing && s.cursor > 0 {
+				s.cursor--
+			}
+		case tea.MouseButtonWheelDown:
+			if !s.editing && s.cursor < len(s.fields)-1 {
+				s.cursor++
+			}
+		case tea.MouseButtonLeft:
+			if s.editing || msg.Action != tea.MouseActionPress {
+				return nil
+			}
+
+			// Compute vertical padding matching wrapContent.
+			baseLines := 2 // title + blank
+			if s.err != nil || s.saved {
+				baseLines += 2 // status line + blank
+			}
+			contentLines := baseLines + len(s.fields) + 2 // fields + blank + hint
+			padTop := 0
+			ch := s.height - 1
+			if ch > contentLines {
+				padTop = (ch - contentLines) / 4
+			}
+			y := msg.Y - padTop
+			// Fields start at baseLines.
+			fieldStart := baseLines
+			if y >= fieldStart && y < fieldStart+len(s.fields) {
+				s.cursor = y - fieldStart
+			}
 		}
 	}
 	return nil
@@ -245,6 +285,8 @@ func (s *ConfigEditorScreen) buildConfig() *config.Config {
 
 // View renders the config editor screen.
 func (s *ConfigEditorScreen) View(width, height int) string {
+	s.width = width
+	s.height = height
 	var sections []string
 
 	// Header.

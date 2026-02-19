@@ -120,6 +120,9 @@ func (c *CrewManagerScreen) Update(msg tea.Msg) tea.Cmd {
 	case ErrorMsg:
 		c.statusMsg = fmt.Sprintf("Error: %v", msg.Err)
 
+	case tea.MouseMsg:
+		return c.handleMouse(msg)
+
 	case tea.KeyMsg:
 		// Delete confirmation.
 		if c.mode == crewModeDelete {
@@ -220,6 +223,59 @@ func (c *CrewManagerScreen) updateForm(msg tea.KeyMsg) tea.Cmd {
 		c.pathsInput, cmd = c.pathsInput.Update(msg)
 	}
 	return cmd
+}
+
+// ---------------------------------------------------------------------------
+// Mouse handling
+// ---------------------------------------------------------------------------
+
+func (c *CrewManagerScreen) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		if c.mode == crewModeList && len(c.crews) > 0 {
+			c.cursor = (c.cursor - 1 + len(c.crews)) % len(c.crews)
+		}
+	case msg.Button == tea.MouseButtonWheelDown:
+		if c.mode == crewModeList && len(c.crews) > 0 {
+			c.cursor = (c.cursor + 1) % len(c.crews)
+		}
+	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+		if c.mode == crewModeCreate || c.mode == crewModeEdit {
+			// Form mode: fields are rendered as label+input pairs starting at row ~4.
+			// Each field takes 2 rows (label + input), laid out consecutively.
+			// Field 0 (name):        rows ~4-5
+			// Field 1 (objective):   rows ~6-7
+			// Field 2 (constraints): rows ~8-9
+			// Field 3 (commands):    rows ~10-11
+			// Field 4 (paths):       rows ~12-13
+			y := msg.Y
+			newFocus := -1
+			switch {
+			case y <= 5:
+				newFocus = 0
+			case y <= 7:
+				newFocus = 1
+			case y <= 9:
+				newFocus = 2
+			case y <= 11:
+				newFocus = 3
+			case y >= 12:
+				newFocus = 4
+			}
+			if newFocus >= 0 && newFocus <= 4 {
+				c.formFocus = newFocus
+				c.focusField(c.formFocus)
+			}
+		} else if c.mode == crewModeList {
+			// List mode: items start at row 5 (header + blank + count + blank + items).
+			itemStart := 5
+			idx := msg.Y - itemStart
+			if idx >= 0 && idx < len(c.crews) {
+				c.cursor = idx
+			}
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

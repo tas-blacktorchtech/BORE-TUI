@@ -1,0 +1,2469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BORE — Agent Orchestration</title>
+<style>
+/* ============================================================
+   CSS VARIABLES & RESET
+   ============================================================ */
+:root {
+  --bg: #0b0f1a;
+  --surface: #11182a;
+  --surface2: #1a2234;
+  --surface3: #202b42;
+  --border: #24324f;
+  --border-light: #2e3f60;
+  --primary: #1e3a8a;
+  --primary-light: #2d55c8;
+  --primary-hover: #3668e0;
+  --accent: #dc2626;
+  --text: #e5e7eb;
+  --text-muted: #9ca3af;
+  --text-dim: #6b7280;
+  --success: #22c55e;
+  --success-bg: rgba(34,197,94,0.12);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245,158,11,0.12);
+  --error: #dc2626;
+  --error-bg: rgba(220,38,38,0.12);
+  --running: #3b82f6;
+  --running-bg: rgba(59,130,246,0.12);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --transition: 0.15s ease;
+  --shadow: 0 4px 24px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 48px rgba(0,0,0,0.7);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--primary-light); text-decoration: none; }
+button { cursor: pointer; font-family: var(--font); }
+input, textarea, select { font-family: var(--font); }
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+#app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+/* NAVBAR */
+#navbar {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.nav-logo {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.nav-logo span { color: var(--accent); }
+
+.nav-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.nav-cluster-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.nav-cluster-name { color: var(--text); font-weight: 500; }
+
+.nav-spacer { flex: 1; }
+
+.nav-actions { display: flex; align-items: center; gap: 8px; }
+
+/* MAIN AREA */
+#main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* SIDEBAR */
+#sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 12px 14px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 6px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  transition: background var(--transition), color var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sidebar-item:hover { background: var(--surface2); color: var(--text); }
+.sidebar-item.active { background: var(--surface2); color: var(--text); font-weight: 500; }
+.sidebar-item .item-icon { font-size: 11px; flex-shrink: 0; }
+.sidebar-item .item-label { overflow: hidden; text-overflow: ellipsis; }
+.sidebar-item .item-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--surface3);
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+/* TASK LIST */
+#task-list-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+.pane-header {
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.pane-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pane-subtitle { font-size: 12px; color: var(--text-dim); }
+.pane-spacer { flex: 1; }
+
+.task-list { flex: 1; overflow-y: auto; padding: 8px; }
+
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--transition);
+  border: 1px solid transparent;
+  margin-bottom: 4px;
+}
+.task-item:hover { background: var(--surface2); }
+.task-item.active {
+  background: var(--surface2);
+  border-color: var(--border-light);
+}
+.task-item .task-info { flex: 1; min-width: 0; }
+.task-item .task-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+.task-item .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; align-items: center; }
+
+/* DETAIL PANEL */
+#detail-pane {
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detail-content { flex: 1; overflow-y: auto; padding: 14px; }
+
+.detail-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  gap: 8px;
+  font-size: 13px;
+}
+.detail-empty-icon { font-size: 32px; opacity: 0.3; }
+
+.detail-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.detail-section {
+  margin-bottom: 16px;
+}
+.detail-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.detail-section-value {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.detail-prompt {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* EXECUTIONS LIST IN DETAIL */
+.exec-list { display: flex; flex-direction: column; gap: 6px; }
+.exec-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+  font-size: 12px;
+}
+.exec-item:hover { border-color: var(--border-light); background: var(--surface3); }
+.exec-item .exec-branch { font-family: var(--font-mono); color: var(--text-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exec-item .exec-date { color: var(--text-dim); font-size: 11px; flex-shrink: 0; }
+
+/* ============================================================
+   STATUS BADGES
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.badge-running { background: var(--running-bg); color: var(--running); }
+.badge-completed { background: var(--success-bg); color: var(--success); }
+.badge-failed { background: var(--error-bg); color: var(--error); }
+.badge-pending { background: rgba(156,163,175,0.12); color: var(--text-muted); }
+.badge-diff_review { background: var(--warning-bg); color: var(--warning); }
+.badge-interrupted { background: var(--warning-bg); color: var(--warning); }
+.badge-unknown { background: #374151; color: #9ca3af; }
+.badge-cancelled { background: #374151; color: #9ca3af; }
+.badge-commander { background: #6d28d9; color: #fff; }
+.badge-review { background: rgba(156,163,175,0.12); color: var(--text-muted); }
+
+/* level badges */
+.badge-debug { background: rgba(156,163,175,0.1); color: var(--text-dim); }
+.badge-info { background: var(--running-bg); color: var(--running); }
+.badge-warn { background: var(--warning-bg); color: var(--warning); }
+.badge-error { background: var(--error-bg); color: var(--error); }
+
+/* outcome badges */
+.badge-success { background: var(--success-bg); color: var(--success); }
+.badge-partial { background: var(--warning-bg); color: var(--warning); }
+
+/* agent type badges */
+.badge-boss { background: rgba(139,92,246,0.15); color: #a78bfa; }
+.badge-worker { background: rgba(59,130,246,0.12); color: var(--running); }
+
+/* Pulsing dot for running */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.badge-running .pulse-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--running);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+  white-space: nowrap;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--primary-light);
+  color: #fff;
+  border-color: var(--primary-light);
+}
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--border);
+}
+.btn-secondary:hover:not(:disabled) { background: var(--surface3); border-color: var(--border-light); }
+
+.btn-danger {
+  background: var(--error-bg);
+  color: var(--error);
+  border-color: rgba(220,38,38,0.3);
+}
+.btn-danger:hover:not(:disabled) { background: rgba(220,38,38,0.2); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: transparent;
+  padding: 6px 10px;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-icon { padding: 6px; }
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+.form-group { margin-bottom: 16px; }
+.form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+.form-input {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+.form-input:focus { border-color: var(--primary-light); }
+.form-input::placeholder { color: var(--text-dim); }
+
+textarea.form-input { resize: vertical; min-height: 80px; line-height: 1.6; }
+
+select.form-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+/* Segmented control */
+.segmented {
+  display: flex;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px;
+  gap: 2px;
+}
+.segmented-option {
+  flex: 1;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  text-align: center;
+}
+.segmented-option.active {
+  background: var(--primary-light);
+  color: #fff;
+}
+.segmented-option:hover:not(.active) { background: var(--surface3); color: var(--text); }
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(3px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.2s ease;
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+}
+
+.modal-sm { width: 460px; }
+.modal-md { width: 600px; }
+.modal-lg { width: 760px; }
+.modal-xl { width: min(1100px, calc(100vw - 40px)); height: calc(100vh - 40px); }
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.modal-title { font-size: 15px; font-weight: 600; flex: 1; }
+.modal-body { flex: 1; overflow-y: auto; padding: 20px; }
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   TABS
+   ============================================================ */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.tab-btn {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--text); border-bottom-color: var(--primary-light); }
+
+.tab-content { display: none; flex: 1; overflow: hidden; }
+.tab-content.active { display: flex; flex-direction: column; }
+
+/* ============================================================
+   EVENTS LOG
+   ============================================================ */
+.events-log { padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; }
+.event-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.event-row:hover { background: var(--surface2); }
+.event-ts { color: var(--text-dim); font-family: var(--font-mono); font-size: 11px; flex-shrink: 0; padding-top: 1px; min-width: 72px; }
+.event-msg { color: var(--text-muted); flex: 1; word-break: break-word; }
+.event-type { color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; flex-shrink: 0; }
+
+/* ============================================================
+   AGENT RUNS
+   ============================================================ */
+.run-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.run-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.run-card-role { font-size: 12px; font-weight: 600; color: var(--text); }
+.run-summary { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.6; }
+.run-files { display: flex; flex-wrap: wrap; gap: 4px; }
+.run-file {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text-muted);
+}
+.run-prompt-toggle { font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.run-prompt-toggle:hover { color: var(--text-muted); }
+.run-prompt-content {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  display: none;
+}
+.run-prompt-content.open { display: block; }
+
+/* ============================================================
+   DIFF VIEWER
+   ============================================================ */
+.diff-container { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.diff-actions {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.diff-status { font-size: 12px; color: var(--text-muted); }
+.diff-code {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+.diff-line { display: block; }
+.diff-add { color: #4ade80; }
+.diff-remove { color: #f87171; }
+.diff-hunk { color: #818cf8; }
+.diff-header { color: #e5e7eb; font-weight: 600; }
+.diff-context { color: var(--text-dim); }
+.diff-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* ============================================================
+   NO CLUSTER VIEW
+   ============================================================ */
+#no-cluster-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 40px;
+}
+.no-cluster-logo {
+  font-size: 64px;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  color: var(--text);
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+.no-cluster-logo span { color: var(--accent); }
+.no-cluster-sub {
+  font-size: 16px;
+  color: var(--text-muted);
+  margin-bottom: 36px;
+}
+.cluster-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 500px;
+}
+.cluster-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+.cluster-card:hover { border-color: var(--primary-light); background: var(--surface2); }
+.cluster-card-name { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.cluster-card-path { font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+.cluster-card-hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; font-style: italic; }
+.no-cluster-empty { font-size: 13px; color: var(--text-dim); text-align: center; }
+
+/* ============================================================
+   BRAIN TEXTAREA
+   ============================================================ */
+.brain-textarea {
+  width: 100%;
+  min-height: 300px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 13px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.brain-textarea:focus {
+  outline: none;
+  border-color: var(--primary-light);
+}
+
+/* ============================================================
+   COMMANDER MODAL (Brain + Chat tabs)
+   ============================================================ */
+.commander-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin: 0 -24px 16px; padding: 0 24px; }
+.commander-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); cursor: pointer; font-size: 13px; font-weight: 500; padding: 10px 18px; transition: color .15s, border-color .15s; }
+.commander-tab:hover { color: var(--text); }
+.commander-tab.active { border-bottom-color: var(--primary-light); color: var(--primary-light); }
+.chat-panel { display: flex; flex-direction: column; height: 420px; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; gap: 12px; }
+.chat-msg { display: flex; flex-direction: column; gap: 3px; max-width: 88%; }
+.chat-msg.user { align-self: flex-end; align-items: flex-end; }
+.chat-msg.commander { align-self: flex-start; align-items: flex-start; }
+.chat-msg-label { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
+.chat-msg-body { background: var(--surface2); border-radius: 10px; padding: 8px 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.chat-msg.user .chat-msg-body { background: var(--primary); color: #fff; }
+.chat-msg.commander .chat-msg-body { background: var(--surface2); color: var(--text); }
+.chat-thinking { align-self: flex-start; color: var(--text-dim); font-size: 13px; font-style: italic; padding: 4px 0; }
+.chat-input-row { display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); margin-top: 8px; }
+.chat-input-row textarea { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: none; box-sizing: border-box; }
+.chat-input-row textarea:focus { outline: none; border-color: var(--primary-light); }
+.chat-input-row textarea::placeholder { color: var(--text-dim); }
+.chat-empty { color: var(--text-dim); font-size: 13px; text-align: center; padding: 32px 0; }
+
+/* ============================================================
+   CREWS MODAL
+   ============================================================ */
+.crew-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.crew-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.crew-card-info { flex: 1; min-width: 0; }
+.crew-card-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.crew-card-obj { font-size: 12px; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.crew-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* Inline edit form */
+.crew-edit-form {
+  background: var(--surface2);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+/* ============================================================
+   OVERVIEW META TABLE
+   ============================================================ */
+.meta-table { width: 100%; border-collapse: collapse; }
+.meta-table td { padding: 6px 0; font-size: 13px; vertical-align: top; }
+.meta-table td:first-child { color: var(--text-dim); width: 120px; padding-right: 12px; }
+.meta-table td:last-child { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
+
+/* ============================================================
+   TOAST NOTIFICATIONS
+   ============================================================ */
+#toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+.toast {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: var(--shadow);
+  max-width: 360px;
+  animation: slideUp 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast-error { border-left: 3px solid var(--error); }
+.toast-success { border-left: 3px solid var(--success); }
+.toast-info { border-left: 3px solid var(--running); }
+
+/* ============================================================
+   LOADING STATES
+   ============================================================ */
+.loading-bar {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--primary-light), transparent);
+  background-size: 200% 100%;
+  animation: loading 1.5s linear infinite;
+}
+@keyframes loading {
+  0% { background-position: -100% 0; }
+  100% { background-position: 300% 0; }
+}
+
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary-light);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 50%, var(--surface2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ============================================================
+   CONFIRMATION DIALOG
+   ============================================================ */
+.confirm-dialog {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-top: 12px;
+}
+.confirm-dialog p { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; }
+.confirm-dialog .btn-row { display: flex; gap: 8px; }
+
+/* ============================================================
+   DIVIDER
+   ============================================================ */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
+/* ============================================================
+   EMPTY STATES
+   ============================================================ */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.empty-state-icon { font-size: 28px; opacity: 0.3; margin-bottom: 4px; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+  #sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); max-height: 160px; }
+  #main { flex-direction: column; }
+  #detail-pane { width: 100%; border-top: 1px solid var(--border); max-height: 50vh; }
+  .modal-xl { width: 100vw; height: 100vh; border-radius: 0; }
+  .modal-lg, .modal-md, .modal-sm { width: calc(100vw - 24px); }
+}
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+.hidden { display: none !important; }
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.gap-8 { gap: 8px; }
+.mt-8 { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+.text-muted { color: var(--text-muted); }
+.text-dim { color: var(--text-dim); }
+.text-mono { font-family: var(--font-mono); }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
+.w-full { width: 100%; }
+.overflow-hidden { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Loading bar at top -->
+  <div id="loading-bar" class="loading-bar hidden"></div>
+
+  <!-- Navbar -->
+  <nav id="navbar">
+    <span class="nav-logo">B<span>O</span>RE</span>
+    <div id="nav-cluster-info" class="nav-cluster hidden">
+      <div class="nav-cluster-dot"></div>
+      <span class="nav-cluster-name" id="nav-cluster-name">—</span>
+    </div>
+    <div class="nav-spacer"></div>
+    <div class="nav-actions" id="nav-actions">
+      <!-- rendered by JS -->
+    </div>
+  </nav>
+
+  <!-- Main content area — swapped by JS -->
+  <div id="main-content" style="flex:1;display:flex;overflow:hidden;">
+    <!-- filled by render() -->
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Modal container -->
+<div id="modal-container"></div>
+
+<script>
+/* ============================================================
+   STATE
+   ============================================================ */
+const state = {
+  loading: false,
+  cluster: null,
+  knownClusters: [],
+  tasks: [],
+  executions: [],
+  threads: [],
+  crews: [],
+  selectedThreadId: null,   // null = All
+  selectedTaskId: null,
+  currentExec: null,
+  currentExecEvents: [],
+  currentExecRuns: [],
+  currentDiff: null,
+  modal: null, // 'new-task' | 'execution' | 'crews' | 'threads' | 'brain' | null
+  execModalTab: 'overview',
+  sseConnected: false,
+  brain: '',
+  brainLoading: false,
+  commanderTab: 'brain',   // 'brain' | 'chat'
+  chatHistory: [],          // [{role,content}] — persists for session
+  chatThinking: false,
+};
+
+/* ============================================================
+   UTILITIES
+   ============================================================ */
+function el(id) { return document.getElementById(id); }
+function qs(sel, ctx) { return (ctx || document).querySelector(sel); }
+function qsa(sel, ctx) { return Array.from((ctx || document).querySelectorAll(sel)); }
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+      d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch { return iso; }
+}
+
+function fmtDateShort(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch { return iso; }
+}
+
+function fmtDuration(start, end) {
+  if (!start) return '—';
+  const a = new Date(start);
+  const b = end ? new Date(end) : new Date();
+  const sec = Math.floor((b - a) / 1000);
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+  return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+}
+
+/* ============================================================
+   BADGE HELPERS
+   ============================================================ */
+function statusBadge(status) {
+  const labels = {
+    running: '<span class="pulse-dot"></span>RUN',
+    completed: 'DONE',
+    failed: 'FAIL',
+    pending: 'PEND',
+    diff_review: 'DIFF',
+    interrupted: 'INT',
+    review: 'REV',
+  };
+  const label = labels[status] || escHtml(status).toUpperCase();
+  return `<span class="badge badge-${escHtml(status)}">${label}</span>`;
+}
+
+function levelBadge(level) {
+  return `<span class="badge badge-${escHtml(level)}">${escHtml(level).toUpperCase()}</span>`;
+}
+
+function outcomeBadge(outcome) {
+  return `<span class="badge badge-${escHtml(outcome)}">${escHtml(outcome).toUpperCase()}</span>`;
+}
+
+function agentTypeBadge(t) {
+  return `<span class="badge badge-${escHtml(t)}">${escHtml(t).toUpperCase()}</span>`;
+}
+
+/* ============================================================
+   API
+   ============================================================ */
+async function api(method, path, body) {
+  setLoading(true);
+  try {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    const ct = res.headers.get('content-type') || '';
+    let data;
+    if (ct.includes('application/json')) {
+      data = await res.json();
+    } else {
+      data = await res.text();
+    }
+    if (!res.ok) {
+      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function GET(path) { return api('GET', path); }
+function POST(path, body) { return api('POST', path, body); }
+function PUT(path, body) { return api('PUT', path, body); }
+function DELETE(path) { return api('DELETE', path); }
+
+/* ============================================================
+   LOADING STATE
+   ============================================================ */
+let loadingCount = 0;
+function setLoading(on) {
+  loadingCount += on ? 1 : -1;
+  if (loadingCount < 0) loadingCount = 0;
+  const bar = el('loading-bar');
+  if (bar) bar.classList.toggle('hidden', loadingCount === 0);
+}
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+function toast(message, type = 'info', duration = 5000) {
+  const container = el('toast-container');
+  const div = document.createElement('div');
+  div.className = `toast toast-${type}`;
+  const icons = { error: '✕', success: '✓', info: 'ℹ' };
+  div.innerHTML = `<span style="font-size:12px;font-weight:700;flex-shrink:0">${icons[type] || 'ℹ'}</span><span>${escHtml(message)}</span>`;
+  container.appendChild(div);
+  setTimeout(() => {
+    div.style.opacity = '0';
+    div.style.transition = 'opacity 0.3s';
+    setTimeout(() => div.remove(), 300);
+  }, duration);
+}
+
+/* ============================================================
+   DATA LOADING
+   ============================================================ */
+async function loadStatus() {
+  try {
+    const data = await GET('/api/status');
+    state.cluster = data.cluster || null;
+    if (!state.cluster) {
+      await loadKnownClusters();
+    }
+  } catch (e) {
+    state.cluster = null;
+    toast('Could not connect to server: ' + e.message, 'error');
+    await loadKnownClusters().catch(() => {});
+  }
+}
+
+async function loadKnownClusters() {
+  try {
+    const data = await GET('/api/clusters');
+    state.knownClusters = Array.isArray(data) ? data : [];
+  } catch {
+    state.knownClusters = [];
+  }
+}
+
+async function loadTasks() {
+  try {
+    const data = await GET('/api/tasks');
+    state.tasks = Array.isArray(data) ? data : [];
+    renderTaskList();
+    renderDetail();
+  } catch (e) {
+    // silently ignore, could be no cluster
+  }
+}
+
+async function loadExecutions() {
+  try {
+    const data = await GET('/api/executions');
+    state.executions = Array.isArray(data) ? data : [];
+    renderDetail();
+  } catch {}
+}
+
+async function loadThreads() {
+  try {
+    const data = await GET('/api/threads');
+    state.threads = Array.isArray(data) ? data : [];
+    renderSidebar();
+    renderDetail();
+  } catch {}
+}
+
+async function loadCrews() {
+  try {
+    const data = await GET('/api/crews');
+    state.crews = Array.isArray(data) ? data : [];
+  } catch {}
+}
+
+async function loadAll() {
+  if (!state.cluster) return;
+  await Promise.all([loadTasks(), loadExecutions(), loadThreads(), loadCrews()]);
+}
+
+async function loadExecution(id) {
+  try {
+    state.currentExec = await GET(`/api/executions/${id}`);
+    state.currentExecEvents = await GET(`/api/executions/${id}/events`).catch(() => []);
+    state.currentExecRuns = await GET(`/api/executions/${id}/runs`).catch(() => []);
+    state.currentDiff = await GET(`/api/diff/${id}`).catch(() => null);
+    renderExecModal();
+  } catch (e) {
+    state.currentExec = null;
+    state.currentExecEvents = [];
+    state.currentExecRuns = [];
+    toast('Could not load execution: ' + e.message, 'error');
+  }
+}
+
+/* ============================================================
+   SSE
+   ============================================================ */
+let sseSource = null;
+let sseReconnectTimer = null;
+
+function updateSSEIndicator() {
+  const dot = document.querySelector('.nav-cluster-dot');
+  if (!dot) return;
+  dot.style.background = state.sseConnected ? 'var(--success)' : '#f59e0b';
+}
+
+function connectSSE() {
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  if (!state.cluster) return;
+
+  sseSource = new EventSource('/events');
+
+  sseSource.addEventListener('connected', () => {
+    state.sseConnected = true;
+    updateSSEIndicator();
+  });
+
+  sseSource.onopen = () => {
+    state.sseConnected = true;
+    updateSSEIndicator();
+  };
+
+  sseSource.addEventListener('ping', () => {});
+
+  sseSource.addEventListener('tasks_updated', () => {
+    loadTasks();
+  });
+
+  sseSource.addEventListener('executions_updated', () => {
+    loadExecutions();
+    if (state.currentExec && state.modal === 'execution') {
+      loadExecution(state.currentExec.id);
+    }
+  });
+
+  sseSource.addEventListener('crews_updated', () => {
+    loadCrews();
+  });
+
+  sseSource.addEventListener('threads_updated', () => {
+    loadThreads();
+  });
+
+  sseSource.addEventListener('cluster_opened', async () => {
+    await loadStatus();
+    await loadAll();
+    renderApp();
+  });
+
+  sseSource.addEventListener('brain_updated', async () => {
+    await loadBrain();
+    if (state.modal === 'commander') {
+      const ta = el('brain-textarea');
+      if (ta) ta.value = state.brain;
+    }
+  });
+
+  sseSource.onerror = () => {
+    state.sseConnected = false;
+    updateSSEIndicator();
+    sseSource.close();
+    sseSource = null;
+    if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = setTimeout(connectSSE, 5000);
+  };
+}
+
+/* ============================================================
+   AUTO REFRESH
+   ============================================================ */
+setInterval(() => {
+  if (!state.sseConnected) {
+    if (state.cluster) loadAll();
+    else loadStatus().then(() => renderApp());
+  }
+}, 10000);
+
+/* ============================================================
+   KEYBOARD SHORTCUTS
+   ============================================================ */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (state.modal) closeModal();
+  }
+});
+
+/* ============================================================
+   RENDER — TOP LEVEL
+   ============================================================ */
+function renderApp() {
+  const mainContent = el('main-content');
+  const navActions = el('nav-actions');
+  const navCluster = el('nav-cluster-info');
+
+  if (state.cluster) {
+    // Show cluster name
+    navCluster.classList.remove('hidden');
+    el('nav-cluster-name').textContent = state.cluster.name || state.cluster.id || 'Unknown';
+
+    // Nav action buttons
+    navActions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="openModal('commander')" title="Commander">&#x1F9E0; Commander</button>
+      <button class="btn btn-secondary btn-sm" onclick="openModal('threads')">Threads</button>
+      <button class="btn btn-secondary btn-sm" onclick="openModal('crews')">Crews</button>
+      <button class="btn btn-primary btn-sm" onclick="openModal('new-task')">+ New Task</button>
+    `;
+
+    mainContent.innerHTML = buildDashboardHTML();
+    renderSidebar();
+    renderTaskList();
+    renderDetail();
+  } else {
+    navCluster.classList.add('hidden');
+    navActions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="loadStatus().then(renderApp)">⟳ Refresh</button>
+    `;
+    mainContent.innerHTML = buildNoClusterHTML();
+  }
+}
+
+/* ============================================================
+   NO CLUSTER VIEW
+   ============================================================ */
+function buildNoClusterHTML() {
+  const clusters = state.knownClusters;
+  let clusterContent;
+
+  if (!clusters || clusters.length === 0) {
+    clusterContent = `<p class="no-cluster-empty">No known clusters found.<br>Open a cluster in the BORE TUI first.</p>`;
+  } else {
+    const cards = clusters.map(c => `
+      <div class="cluster-card" onclick="openCluster(${JSON.stringify(c.path)})">
+        <div class="cluster-card-name">${escHtml(c.name || 'Unnamed Cluster')}</div>
+        <div class="cluster-card-path">${escHtml(c.path || '')}</div>
+        <div class="cluster-card-hint">Click to open</div>
+      </div>
+    `).join('');
+    clusterContent = `<div class="cluster-cards">${cards}</div>`;
+  }
+
+  return `
+    <div id="no-cluster-view">
+      <div class="no-cluster-logo">B<span>O</span>RE</div>
+      <div class="no-cluster-sub">No cluster open</div>
+      ${clusterContent}
+      <div style="margin-top:24px;">
+        <button class="btn btn-secondary" onclick="loadStatus().then(renderApp)">⟳ Refresh</button>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   DASHBOARD SHELL
+   ============================================================ */
+function buildDashboardHTML() {
+  return `
+    <div id="main" style="flex:1;display:flex;overflow:hidden;">
+      <div id="sidebar">
+        <div class="sidebar-header">
+          <span>Threads</span>
+          <button class="btn btn-ghost btn-sm btn-icon" style="padding:2px 6px;font-size:14px;" onclick="openModal('threads')" title="Manage threads">+</button>
+        </div>
+        <div class="sidebar-list" id="thread-list"></div>
+      </div>
+      <div id="task-list-pane">
+        <div class="pane-header">
+          <span class="pane-title" id="task-pane-title">All Tasks</span>
+          <span class="pane-spacer"></span>
+          <button class="btn btn-ghost btn-sm" onclick="loadTasks()" title="Refresh">⟳</button>
+        </div>
+        <div class="task-list" id="task-list"></div>
+      </div>
+      <div id="detail-pane">
+        <div id="detail-inner" class="detail-content">
+          <div class="detail-empty">
+            <div class="detail-empty-icon">☰</div>
+            <span>Select a task to view details</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   SIDEBAR — THREADS
+   ============================================================ */
+function renderSidebar() {
+  const list = el('thread-list');
+  if (!list) return;
+
+  const allCount = state.tasks.length;
+  let html = `
+    <div class="sidebar-item ${state.selectedThreadId === null ? 'active' : ''}" onclick="selectThread(null)">
+      <span class="item-icon">◈</span>
+      <span class="item-label">All Tasks</span>
+      <span class="item-count">${allCount}</span>
+    </div>
+  `;
+
+  for (const t of state.threads) {
+    const count = state.tasks.filter(task => task.thread_id === t.id).length;
+    html += `
+      <div class="sidebar-item ${state.selectedThreadId === t.id ? 'active' : ''}" onclick="selectThread(${t.id})">
+        <span class="item-icon">›</span>
+        <span class="item-label">${escHtml(t.name)}</span>
+        <span class="item-count">${count}</span>
+      </div>
+    `;
+  }
+
+  list.innerHTML = html;
+}
+
+function selectThread(id) {
+  state.selectedThreadId = id;
+  renderSidebar();
+  renderTaskList();
+  const titleEl = el('task-pane-title');
+  if (titleEl) {
+    if (id === null) {
+      titleEl.textContent = 'All Tasks';
+    } else {
+      const thread = state.threads.find(t => t.id === id);
+      titleEl.textContent = thread ? thread.name : 'Thread';
+    }
+  }
+}
+
+/* ============================================================
+   TASK LIST
+   ============================================================ */
+function renderTaskList() {
+  const list = el('task-list');
+  if (!list) return;
+
+  let tasks = state.tasks;
+  if (state.selectedThreadId !== null) {
+    tasks = tasks.filter(t => t.thread_id === state.selectedThreadId);
+  }
+
+  if (tasks.length === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">📋</div>
+        <span>No tasks yet</span>
+        <button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="openModal('new-task')">Create Task</button>
+      </div>
+    `;
+    return;
+  }
+
+  // Sort by updated_at desc
+  tasks = [...tasks].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+
+  list.innerHTML = tasks.map(t => {
+    const thread = state.threads.find(th => th.id === t.thread_id);
+    const active = state.selectedTaskId === t.id;
+    return `
+      <div class="task-item ${active ? 'active' : ''}" onclick="selectTask(${t.id})">
+        ${statusBadge(t.status)}
+        <div class="task-info">
+          <div class="task-title">${escHtml(t.title)}</div>
+          <div class="task-meta">
+            <span>${escHtml(t.complexity || 'basic')}</span>
+            ${thread ? `<span>·</span><span>${escHtml(thread.name)}</span>` : ''}
+            <span>·</span><span>${fmtDateShort(t.updated_at)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectTask(id) {
+  state.selectedTaskId = id;
+  renderTaskList();
+  renderDetail();
+}
+
+/* ============================================================
+   DETAIL PANEL
+   ============================================================ */
+function renderDetail() {
+  const panel = el('detail-inner');
+  if (!panel) return;
+
+  if (!state.selectedTaskId) {
+    panel.innerHTML = `
+      <div class="detail-empty">
+        <div class="detail-empty-icon">☰</div>
+        <span>Select a task to view details</span>
+      </div>
+    `;
+    return;
+  }
+
+  const task = state.tasks.find(t => t.id === state.selectedTaskId);
+  if (!task) {
+    panel.innerHTML = `<div class="detail-empty"><span>Task not found</span></div>`;
+    return;
+  }
+
+  const thread = state.threads.find(t => t.id === task.thread_id);
+  const taskExecs = state.executions.filter(e => e.task_id === task.id)
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+  const execsHTML = taskExecs.length === 0
+    ? `<div class="text-dim text-sm" style="padding:4px 0;">No executions yet</div>`
+    : `<div class="exec-list">${taskExecs.map(e => `
+        <div class="exec-item" onclick="openExecutionModal(${e.id})">
+          ${statusBadge(e.status)}
+          <span class="exec-branch">${escHtml(e.exec_branch || e.id)}</span>
+          <span class="exec-date">${fmtDateShort(e.created_at)}</span>
+        </div>
+      `).join('')}</div>`;
+
+  panel.innerHTML = `
+    <div class="detail-title">${escHtml(task.title)}</div>
+
+    <div class="detail-row">
+      <div class="detail-section">
+        <div class="detail-section-label">Status</div>
+        <div>${statusBadge(task.status)}</div>
+      </div>
+      <div class="detail-section">
+        <div class="detail-section-label">Complexity</div>
+        <div class="detail-section-value">${escHtml(task.complexity || '—')}</div>
+      </div>
+    </div>
+
+    <div class="detail-row">
+      <div class="detail-section">
+        <div class="detail-section-label">Mode</div>
+        <div class="detail-section-value text-sm">${escHtml(task.mode || '—')}</div>
+      </div>
+      <div class="detail-section">
+        <div class="detail-section-label">Thread</div>
+        <div class="detail-section-value">${escHtml(thread ? thread.name : '—')}</div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-label">Created</div>
+      <div class="detail-section-value text-sm">${fmtDate(task.created_at)}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-label">Prompt</div>
+      <div class="detail-prompt">${escHtml(task.prompt || '')}</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="detail-section">
+      <div class="detail-section-label" style="margin-bottom:8px;">Executions (${taskExecs.length})</div>
+      ${execsHTML}
+    </div>
+  `;
+}
+
+/* ============================================================
+   EXECUTION MODAL
+   ============================================================ */
+async function openExecutionModal(execId) {
+  state.modal = 'execution';
+  state.execModalTab = 'overview';
+  state.currentExec = null;
+  state.currentExecEvents = [];
+  state.currentExecRuns = [];
+  state.currentDiff = null;
+
+  // Render skeleton first
+  renderExecModal();
+  showModal(buildExecModalSkeleton());
+
+  await loadExecution(execId);
+}
+
+function buildExecModalSkeleton() {
+  return `
+    <div class="modal modal-xl" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <span class="modal-title">Loading execution…</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal()">✕</button>
+      </div>
+      <div style="padding:40px;text-align:center;color:var(--text-dim);">
+        <div class="spinner" style="margin:0 auto 12px;width:24px;height:24px;border-width:3px;"></div>
+        <div>Loading execution data…</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderExecModal() {
+  if (state.modal !== 'execution') return;
+  const container = el('modal-container');
+  if (!container) return;
+
+  const exec = state.currentExec;
+  if (!exec) return;
+
+  const task = state.tasks.find(t => t.id === exec.task_id);
+
+  container.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModal()">
+      <div class="modal modal-xl" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <div style="flex:1;min-width:0;">
+            <div class="modal-title" style="margin-bottom:2px;">
+              Execution — ${escHtml(exec.exec_branch || exec.id)}
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);">
+              ${task ? escHtml(task.title) : ''}
+            </div>
+          </div>
+          ${statusBadge(exec.status)}
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="tabs" id="exec-tabs">
+          ${['overview','events','runs','diff'].map(tab => `
+            <button class="tab-btn ${state.execModalTab === tab ? 'active' : ''}"
+              onclick="switchExecTab('${tab}')">${tab === 'diff' ? 'Diff Review' : tab.charAt(0).toUpperCase()+tab.slice(1)}</button>
+          `).join('')}
+        </div>
+
+        <div class="tab-content ${state.execModalTab === 'overview' ? 'active' : ''}" id="tab-overview">
+          ${buildOverviewTab(exec, task)}
+        </div>
+        <div class="tab-content ${state.execModalTab === 'events' ? 'active' : ''}" id="tab-events">
+          ${buildEventsTab()}
+        </div>
+        <div class="tab-content ${state.execModalTab === 'runs' ? 'active' : ''}" id="tab-runs">
+          ${buildRunsTab()}
+        </div>
+        <div class="tab-content ${state.execModalTab === 'diff' ? 'active' : ''}" id="tab-diff">
+          ${buildDiffTab(exec)}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function switchExecTab(tab) {
+  state.execModalTab = tab;
+  renderExecModal();
+}
+
+function buildOverviewTab(exec, task) {
+  const duration = fmtDuration(exec.started_at, exec.finished_at);
+  return `
+    <div style="padding:20px;overflow-y:auto;flex:1;">
+      <table class="meta-table">
+        <tr><td>Execution ID</td><td>${escHtml(exec.id)}</td></tr>
+        <tr><td>Status</td><td>${statusBadge(exec.status)}</td></tr>
+        <tr><td>Base Branch</td><td>${escHtml(exec.base_branch || '—')}</td></tr>
+        <tr><td>Exec Branch</td><td>${escHtml(exec.exec_branch || '—')}</td></tr>
+        <tr><td>Worktree</td><td style="word-break:break-all;">${escHtml(exec.worktree_path || '—')}</td></tr>
+        ${exec.crew_id ? `<tr><td>Crew</td><td>${escHtml(exec.crew_id)}</td></tr>` : ''}
+        <tr><td>Started</td><td>${fmtDate(exec.started_at)}</td></tr>
+        <tr><td>Finished</td><td>${fmtDate(exec.finished_at)}</td></tr>
+        <tr><td>Duration</td><td>${duration}</td></tr>
+        <tr><td>Created</td><td>${fmtDate(exec.created_at)}</td></tr>
+      </table>
+
+      ${task ? `
+        <div class="divider"></div>
+        <div style="font-size:11px;font-weight:600;color:var(--text-dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Task</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;">${escHtml(task.title)}</div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">${escHtml(task.prompt || '')}</div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function buildEventsTab() {
+  const events = state.currentExecEvents;
+  if (!events || events.length === 0) {
+    return `<div class="empty-state"><div class="empty-state-icon">📜</div><span>No events recorded</span></div>`;
+  }
+  const rows = events.map(e => {
+    let ts = '';
+    try { ts = e.ts ? new Date(e.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''; } catch(_) { ts = '?'; }
+    return `
+      <div class="event-row">
+        <span class="event-ts">${escHtml(ts)}</span>
+        ${levelBadge(e.level || 'info')}
+        <span class="event-msg">${escHtml(e.message || '')}</span>
+        ${e.event_type ? `<span class="event-type">${escHtml(e.event_type)}</span>` : ''}
+      </div>
+    `;
+  }).join('');
+  return `<div class="events-log">${rows}</div>`;
+}
+
+function buildRunsTab() {
+  const runs = state.currentExecRuns;
+  if (!runs || runs.length === 0) {
+    return `<div class="empty-state"><div class="empty-state-icon">🤖</div><span>No agent runs recorded</span></div>`;
+  }
+  const cards = runs.map((r, i) => {
+    const filesChanged = Array.isArray(r.files_changed) ? r.files_changed : [];
+    const filesHTML = filesChanged.length > 0
+      ? `<div class="run-files">${filesChanged.map(f => `<span class="run-file">${escHtml(f)}</span>`).join('')}</div>`
+      : '';
+    return `
+      <div class="run-card">
+        <div class="run-card-header">
+          ${agentTypeBadge(r.agent_type || 'worker')}
+          ${r.role ? `<span class="run-card-role">${escHtml(r.role)}</span>` : ''}
+          <span style="flex:1;"></span>
+          ${outcomeBadge(r.outcome || 'unknown')}
+          <span style="font-size:11px;color:var(--text-dim);">${fmtDateShort(r.created_at)}</span>
+        </div>
+        ${r.summary ? `<div class="run-summary">${escHtml(r.summary)}</div>` : ''}
+        ${filesHTML}
+        ${r.prompt ? `
+          <div style="margin-top:6px;">
+            <span class="run-prompt-toggle" onclick="togglePrompt(this)">▸ Show prompt</span>
+            <div class="run-prompt-content">${escHtml(r.prompt)}</div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+  return `<div style="padding:16px;overflow-y:auto;flex:1;">${cards}</div>`;
+}
+
+function togglePrompt(btnEl) {
+  const content = btnEl.nextElementSibling;
+  const open = content.classList.toggle('open');
+  btnEl.textContent = open ? '▾ Hide prompt' : '▸ Show prompt';
+}
+
+function buildDiffTab(exec) {
+  const diff = state.currentDiff;
+  if (!diff) {
+    return `<div class="diff-empty"><div class="empty-state-icon">📂</div><span>No diff available</span></div>`;
+  }
+
+  const diffText = diff.diff || '';
+  const diffLines = diffText.split('\n').map(line => {
+    let cls = 'diff-context';
+    if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-header';
+    else if (line.startsWith('+')) cls = 'diff-add';
+    else if (line.startsWith('-')) cls = 'diff-remove';
+    else if (line.startsWith('@@')) cls = 'diff-hunk';
+    else if (line.startsWith('diff ')) cls = 'diff-header';
+    return `<span class="diff-line ${cls}">${escHtml(line)}</span>`;
+  }).join('\n');
+
+  const isDiffReview = exec.status === 'diff_review';
+
+  return `
+    <div class="diff-container">
+      <div class="diff-actions">
+        <span class="diff-status">
+          Status: <strong>${escHtml(diff.status || exec.status)}</strong>
+        </span>
+        <span style="flex:1;"></span>
+        ${isDiffReview ? `
+          <button class="btn btn-secondary btn-sm" onclick="showRevertConfirm(${exec.id})">Revert Changes</button>
+          <button class="btn btn-secondary btn-sm" onclick="showCommitConfirm(${exec.id})">Commit Only</button>
+          <button class="btn btn-primary btn-sm" onclick="showMergeConfirm(${exec.id})">Merge &amp; Clean Up</button>
+        ` : ''}
+      </div>
+
+      <div id="diff-confirm-area-${escHtml(exec.id)}"></div>
+
+      ${diffText ? `<div class="diff-code">${diffLines}</div>` : `
+        <div class="diff-empty">
+          <div class="empty-state-icon">✓</div>
+          <span>No changes in diff</span>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function showCommitConfirm(execId) {
+  const area = el(`diff-confirm-area-${execId}`);
+  if (!area) return;
+  area.innerHTML = `
+    <div class="confirm-dialog" style="margin:12px 16px 0;">
+      <p>Commit the changes from this execution to the base branch?</p>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" onclick="commitDiff('${escHtml(execId)}')">Yes, Commit</button>
+        <button class="btn btn-secondary btn-sm" onclick="this.closest('.confirm-dialog').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function showRevertConfirm(execId) {
+  const area = el(`diff-confirm-area-${execId}`);
+  if (!area) return;
+  area.innerHTML = `
+    <div class="confirm-dialog" style="margin:12px 16px 0;">
+      <p>Revert all changes from this execution? This cannot be undone.</p>
+      <div class="btn-row">
+        <button class="btn btn-danger btn-sm" onclick="revertDiff('${escHtml(execId)}')">Yes, Revert</button>
+        <button class="btn btn-secondary btn-sm" onclick="this.closest('.confirm-dialog').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+async function commitDiff(execId) {
+  try {
+    const res = await POST(`/api/diff/${execId}/commit`, {});
+    toast(res.message || 'Changes committed successfully', 'success');
+    await loadExecution(execId);
+    await loadTasks();
+    await loadExecutions();
+  } catch (e) {
+    toast('Commit failed: ' + e.message, 'error');
+  }
+}
+
+async function revertDiff(execId) {
+  try {
+    const res = await POST(`/api/diff/${execId}/revert`, {});
+    toast(res.message || 'Changes reverted', 'success');
+    await loadExecution(execId);
+    await loadTasks();
+    await loadExecutions();
+  } catch (e) {
+    toast('Revert failed: ' + e.message, 'error');
+  }
+}
+
+function showMergeConfirm(execId) {
+  const area = el(`diff-confirm-area-${execId}`);
+  if (!area) return;
+  area.innerHTML = `
+    <div class="confirm-dialog" style="margin:12px 16px 0;">
+      <p>Merge execution branch into the base branch, then remove the worktree and branch?<br>
+      <small style="color:var(--text-dim);">This commits all changes, merges into base, and cleans up the worktree.</small></p>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" onclick="mergeDiff('${escHtml(execId)}')">Yes, Merge &amp; Clean Up</button>
+        <button class="btn btn-secondary btn-sm" onclick="this.closest('.confirm-dialog').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+async function mergeDiff(execId) {
+  try {
+    const res = await POST(`/api/diff/${execId}/merge`, {});
+    toast(res.message || 'Merged and cleaned up successfully', 'success');
+    closeModal();
+    await loadTasks();
+    await loadExecutions();
+  } catch (e) {
+    toast('Merge failed: ' + e.message, 'error');
+  }
+}
+
+/* ============================================================
+   NEW TASK MODAL
+   ============================================================ */
+function buildNewTaskModal() {
+  const threadOptions = state.threads.map(t =>
+    `<option value="${escHtml(t.id)}">${escHtml(t.name)}</option>`
+  ).join('');
+
+  return `
+    <div class="modal-backdrop" onclick="closeModal()">
+      <div class="modal modal-md" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <span class="modal-title">New Task</span>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <form id="new-task-form" onsubmit="submitNewTask(event)">
+            <div class="form-group">
+              <label class="form-label">Title</label>
+              <input class="form-input" id="nt-title" type="text" placeholder="Brief task title" required autocomplete="off">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Prompt</label>
+              <textarea class="form-input" id="nt-prompt" rows="6"
+                placeholder="Describe what you want the agent to do…" required></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Complexity</label>
+              <div class="segmented" id="nt-complexity-seg">
+                <button type="button" class="segmented-option active" data-value="basic" onclick="setSegmented('nt-complexity-seg',this)">Basic</button>
+                <button type="button" class="segmented-option" data-value="medium" onclick="setSegmented('nt-complexity-seg',this)">Medium</button>
+                <button type="button" class="segmented-option" data-value="complex" onclick="setSegmented('nt-complexity-seg',this)">Complex</button>
+              </div>
+              <input type="hidden" id="nt-complexity" value="basic">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Mode</label>
+              <div class="segmented" id="nt-mode-seg">
+                <button type="button" class="segmented-option active" data-value="just_get_it_done" onclick="setSegmented('nt-mode-seg',this)">Just Get It Done</button>
+                <button type="button" class="segmented-option" data-value="alert_with_issues" onclick="setSegmented('nt-mode-seg',this)">Alert With Issues</button>
+              </div>
+              <input type="hidden" id="nt-mode" value="just_get_it_done">
+            </div>
+
+            ${state.threads.length > 0 ? `
+              <div class="form-group">
+                <label class="form-label">Thread</label>
+                <select class="form-input" id="nt-thread">
+                  <option value="">— No thread —</option>
+                  ${threadOptions}
+                </select>
+              </div>
+            ` : ''}
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="submitNewTask(event)">Create Task</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setSegmented(segId, btn) {
+  const seg = el(segId);
+  if (!seg) return;
+  qsa('.segmented-option', seg).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // Update hidden input: derive id from segId
+  const inputId = segId.replace(/-seg$/, '');
+  const input = el(inputId);
+  if (input) input.value = btn.dataset.value;
+}
+
+async function submitNewTask(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = (e && (e.target.closest('button') || e.submitter)) || null;
+  if (btn) btn.disabled = true;
+  const title = el('nt-title')?.value?.trim();
+  const prompt = el('nt-prompt')?.value?.trim();
+  const complexity = el('nt-complexity')?.value || 'basic';
+  const mode = el('nt-mode')?.value || 'just_get_it_done';
+  const thread_id = el('nt-thread')?.value || null;
+
+  if (!title || !prompt) { if (btn) btn.disabled = false; toast('Title and prompt are required', 'error'); return; }
+
+  try {
+    await POST('/api/tasks', { title, prompt, complexity, mode, thread_id: thread_id || undefined });
+    toast('Task created', 'success');
+    closeModal();
+    await loadTasks();
+  } catch (err) {
+    toast('Failed to create task: ' + err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ============================================================
+   CREWS MODAL
+   ============================================================ */
+function buildCrewsModal() {
+  const crews = state.crews;
+  const crewCards = crews.length === 0
+    ? `<div class="empty-state"><div class="empty-state-icon">👥</div><span>No crews configured</span></div>`
+    : crews.map(c => `
+      <div class="crew-card" id="crew-card-${escHtml(c.id)}">
+        <div class="crew-card-info">
+          <div class="crew-card-name">${escHtml(c.name)}</div>
+          <div class="crew-card-obj">${escHtml(c.objective || '—')}</div>
+        </div>
+        <div class="crew-card-actions">
+          <button class="btn btn-secondary btn-sm" onclick="editCrew(${c.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDeleteCrew(${c.id})">Delete</button>
+        </div>
+      </div>
+    `).join('');
+
+  return `
+    <div class="modal-backdrop" onclick="closeModal()">
+      <div class="modal modal-lg" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <span class="modal-title">Crews</span>
+          <button class="btn btn-primary btn-sm" onclick="showNewCrewForm()">+ New Crew</button>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="crew-edit-area"></div>
+          <div class="crew-list" id="crew-list">${crewCards}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showNewCrewForm(crew) {
+  const area = el('crew-edit-area');
+  if (!area) return;
+  const isEdit = !!crew;
+  area.innerHTML = `
+    <div class="crew-edit-form" id="crew-form-panel">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">${isEdit ? 'Edit Crew' : 'New Crew'}</div>
+      <div class="form-group">
+        <label class="form-label">Name</label>
+        <input class="form-input" id="crew-name" type="text" value="${isEdit ? escHtml(crew.name) : ''}" placeholder="e.g. Frontend Team">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Objective</label>
+        <textarea class="form-input" id="crew-objective" rows="3" placeholder="What does this crew specialize in?">${isEdit ? escHtml(crew.objective || '') : ''}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Constraints</label>
+        <textarea class="form-input" id="crew-constraints" rows="2" placeholder="Constraints on what this crew can do">${isEdit ? escHtml(crew.constraints || '') : ''}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Allowed Commands</label>
+        <input class="form-input" id="crew-commands" type="text" value="${isEdit ? escHtml(crew.allowed_commands || '') : ''}" placeholder="npm, go, python, ...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ownership Paths</label>
+        <input class="form-input" id="crew-paths" type="text" value="${isEdit ? escHtml(crew.ownership_paths || '') : ''}" placeholder="src/frontend/, docs/, ...">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn btn-primary btn-sm" onclick="${isEdit ? `saveCrew(${crew.id})` : 'createCrew()'}">${isEdit ? 'Save Changes' : 'Create Crew'}</button>
+        <button class="btn btn-secondary btn-sm" onclick="el('crew-edit-area').innerHTML='';el('crew-form-panel')?.remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function editCrew(id) {
+  const crew = state.crews.find(c => c.id === id);
+  if (crew) showNewCrewForm(crew);
+}
+
+async function createCrew(event) {
+  const btn = (event && event.target) || null;
+  if (btn) btn.disabled = true;
+  const name = el('crew-name')?.value?.trim();
+  const objective = el('crew-objective')?.value?.trim();
+  const constraints = el('crew-constraints')?.value?.trim();
+  const allowed_commands = el('crew-commands')?.value?.trim() || '';
+  const ownership_paths = el('crew-paths')?.value?.trim() || '';
+  if (!name) { if (btn) btn.disabled = false; toast('Name is required', 'error'); return; }
+  try {
+    await POST('/api/crews', { name, objective, constraints, allowed_commands, ownership_paths });
+    toast('Crew created', 'success');
+    await loadCrews();
+    openModal('crews');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function saveCrew(id, event) {
+  const btn = (event && event.target) || null;
+  if (btn) btn.disabled = true;
+  const name = el('crew-name')?.value?.trim();
+  const objective = el('crew-objective')?.value?.trim();
+  const constraints = el('crew-constraints')?.value?.trim();
+  const allowed_commands = el('crew-commands')?.value?.trim() || '';
+  const ownership_paths = el('crew-paths')?.value?.trim() || '';
+  if (!name) { if (btn) btn.disabled = false; toast('Name is required', 'error'); return; }
+  try {
+    await PUT(`/api/crews/${id}`, { name, objective, constraints, allowed_commands, ownership_paths });
+    toast('Crew updated', 'success');
+    await loadCrews();
+    openModal('crews');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function confirmDeleteCrew(id) {
+  const card = el(`crew-card-${id}`);
+  if (!card) return;
+  // Show confirm inline
+  const existing = card.querySelector('.confirm-dialog');
+  if (existing) { existing.remove(); return; }
+  const div = document.createElement('div');
+  div.className = 'confirm-dialog';
+  div.style.marginTop = '10px';
+  div.innerHTML = `
+    <p>Delete this crew? This cannot be undone.</p>
+    <div class="btn-row">
+      <button class="btn btn-danger btn-sm" onclick="deleteCrew('${escHtml(id)}')">Delete</button>
+      <button class="btn btn-secondary btn-sm" onclick="this.closest('.confirm-dialog').remove()">Cancel</button>
+    </div>
+  `;
+  card.appendChild(div);
+}
+
+async function deleteCrew(id) {
+  try {
+    await DELETE(`/api/crews/${id}`);
+    toast('Crew deleted', 'success');
+    await loadCrews();
+    openModal('crews');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  }
+}
+
+/* ============================================================
+   THREADS MODAL
+   ============================================================ */
+function buildThreadsModal() {
+  const threads = state.threads;
+  const threadRows = threads.length === 0
+    ? `<div class="empty-state"><div class="empty-state-icon">🧵</div><span>No threads yet</span></div>`
+    : threads.map(t => `
+      <div class="crew-card" id="thread-card-${escHtml(t.id)}">
+        <div class="crew-card-info">
+          <div class="crew-card-name">${escHtml(t.name)}</div>
+          <div class="crew-card-obj">${escHtml(t.description || '—')}</div>
+        </div>
+        <div class="crew-card-actions">
+          <button class="btn btn-danger btn-sm" onclick="confirmDeleteThread(${t.id})">Delete</button>
+        </div>
+      </div>
+    `).join('');
+
+  return `
+    <div class="modal-backdrop" onclick="closeModal()">
+      <div class="modal modal-md" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <span class="modal-title">Threads</span>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="thread-form-area">
+            <div style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:12px;letter-spacing:.06em;text-transform:uppercase;">New Thread</div>
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input class="form-input" id="thread-name" type="text" placeholder="e.g. Feature Work">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description</label>
+              <input class="form-input" id="thread-desc" type="text" placeholder="Optional description">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="createThread()">Create Thread</button>
+            <div class="divider"></div>
+          </div>
+          <div class="crew-list">${threadRows}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function createThread(event) {
+  const btn = (event && event.target) || null;
+  if (btn) btn.disabled = true;
+  const name = el('thread-name')?.value?.trim();
+  const description = el('thread-desc')?.value?.trim();
+  if (!name) { if (btn) btn.disabled = false; toast('Name is required', 'error'); return; }
+  try {
+    await POST('/api/threads', { name, description });
+    toast('Thread created', 'success');
+    await loadThreads();
+    openModal('threads');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function confirmDeleteThread(id) {
+  const card = el(`thread-card-${id}`);
+  if (!card) return;
+  const existing = card.querySelector('.confirm-dialog');
+  if (existing) { existing.remove(); return; }
+  const div = document.createElement('div');
+  div.className = 'confirm-dialog';
+  div.style.marginTop = '10px';
+  div.innerHTML = `
+    <p>Delete this thread? Tasks in this thread will be unthreaded.</p>
+    <div class="btn-row">
+      <button class="btn btn-danger btn-sm" onclick="deleteThread('${escHtml(id)}')">Delete</button>
+      <button class="btn btn-secondary btn-sm" onclick="this.closest('.confirm-dialog').remove()">Cancel</button>
+    </div>
+  `;
+  card.appendChild(div);
+}
+
+async function deleteThread(id) {
+  try {
+    await DELETE(`/api/threads/${id}`);
+    toast('Thread deleted', 'success');
+    if (state.selectedThreadId === id) state.selectedThreadId = null;
+    await loadThreads();
+    openModal('threads');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  }
+}
+
+/* ============================================================
+   MODAL MANAGEMENT
+   ============================================================ */
+function openModal(type) {
+  if (type === 'commander') {
+    state.modal = 'commander';
+    showModal(buildCommanderModal());
+    loadBrain().then(() => {
+      const ta = el('brain-textarea');
+      if (ta) ta.value = state.brain;
+    });
+    return;
+  }
+  state.modal = type;
+  showModalForState();
+}
+
+function showModalForState() {
+  const container = el('modal-container');
+  if (!container) return;
+  switch (state.modal) {
+    case 'new-task':    container.innerHTML = buildNewTaskModal(); break;
+    case 'crews':       container.innerHTML = buildCrewsModal(); break;
+    case 'threads':     container.innerHTML = buildThreadsModal(); break;
+    case 'execution':   renderExecModal(); break;
+    case 'commander':   container.innerHTML = buildCommanderModal(); break;
+    default:            container.innerHTML = ''; break;
+  }
+}
+
+function showModal(html) {
+  const container = el('modal-container');
+  if (container) container.innerHTML = html;
+}
+
+function closeModal() {
+  state.modal = null;
+  state.currentExec = null;
+  state.currentExecEvents = [];
+  state.currentExecRuns = [];
+  state.currentDiff = null;
+  const container = el('modal-container');
+  if (container) container.innerHTML = '';
+}
+
+/* ============================================================
+   OPEN CLUSTER
+   ============================================================ */
+async function openCluster(path) {
+  try {
+    setLoading(true);
+    await POST('/api/clusters/open', { path });
+    // SSE cluster_opened event will trigger reload, but also poll immediately
+    await new Promise(r => setTimeout(r, 500));
+    await loadStatus();
+    await loadAll();
+    renderApp();
+    if (!state.sseConnected) connectSSE();
+  } catch (e) {
+    toast('Failed to open cluster: ' + e.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ============================================================
+   COMMANDER FUNCTIONS (Brain + Chat)
+   ============================================================ */
+async function loadBrain() {
+  try {
+    const data = await GET('/api/brain');
+    state.brain = data.brain || '';
+  } catch (e) {
+    state.brain = '';
+  }
+}
+
+function buildCommanderModal() {
+  const isBrain = state.commanderTab === 'brain';
+  const isChat  = state.commanderTab === 'chat';
+
+  const brainPanel = `
+    <div id="commander-brain-panel" style="display:${isBrain ? 'block' : 'none'}">
+      <p class="text-muted" style="margin-bottom:12px;">Persistent context injected into every Commander prompt. Describe project conventions, constraints, and anything the Commander should always know.</p>
+      <textarea id="brain-textarea" class="brain-textarea" placeholder="Describe your project, coding standards, architectural decisions...">${escHtml(state.brain)}</textarea>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="save-brain-btn" onclick="saveBrain(event)">Save Brain</button>
+      </div>
+    </div>`;
+
+  const msgs = state.chatHistory.length === 0
+    ? `<div class="chat-empty">Ask Commander anything about the project, past tasks, or architecture.</div>`
+    : state.chatHistory.map(m => `
+        <div class="chat-msg ${escHtml(m.role)}">
+          <span class="chat-msg-label">${m.role === 'user' ? 'You' : 'Commander'}</span>
+          <div class="chat-msg-body">${escHtml(m.content)}</div>
+        </div>`).join('');
+  const thinking = state.chatThinking
+    ? `<div class="chat-thinking">⠙ Commander is thinking…</div>` : '';
+
+  const chatPanel = `
+    <div id="commander-chat-panel" style="display:${isChat ? 'flex' : 'none'};flex-direction:column;height:420px;">
+      <div class="chat-messages" id="chat-messages">${msgs}${thinking}</div>
+      <div class="chat-input-row">
+        <textarea id="chat-input" rows="2" placeholder="Ask Commander anything… (Enter to send, Shift+Enter for newline)"
+          onkeydown="handleChatKey(event)"></textarea>
+        <button class="btn btn-primary" onclick="sendCommanderMessage()" ${state.chatThinking ? 'disabled' : ''}>Send</button>
+      </div>
+      ${state.chatHistory.length > 0 ? `<div style="text-align:right;margin-top:6px;"><button class="btn btn-ghost btn-sm" onclick="clearChatHistory()">Clear history</button></div>` : ''}
+    </div>`;
+
+  return `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h2 class="modal-title">&#x1F9E0; Commander</h2>
+          <button class="btn btn-ghost btn-icon modal-close" onclick="closeModal()">&#x2715;</button>
+        </div>
+        <div class="modal-body" style="padding-bottom:0;">
+          <div class="commander-tabs">
+            <button class="commander-tab ${isBrain ? 'active' : ''}" onclick="setCommanderTab('brain')">Brain</button>
+            <button class="commander-tab ${isChat  ? 'active' : ''}" onclick="setCommanderTab('chat')">Chat</button>
+          </div>
+          ${brainPanel}
+          ${chatPanel}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setCommanderTab(tab) {
+  state.commanderTab = tab;
+  if (state.modal === 'commander') showModalForState();
+  // Scroll chat to bottom after re-render
+  if (tab === 'chat') requestAnimationFrame(scrollChatToBottom);
+}
+
+async function saveBrain(event) {
+  const btn = event.target;
+  btn.disabled = true;
+  try {
+    const ta = el('brain-textarea');
+    const brain = ta ? ta.value : state.brain;
+    await PUT('/api/brain', { brain });
+    state.brain = brain;
+    toast('Brain saved', 'success');
+    closeModal();
+  } catch (e) {
+    toast('Failed to save brain: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function handleChatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendCommanderMessage();
+  }
+}
+
+async function sendCommanderMessage() {
+  if (state.chatThinking) return;
+  const input = el('chat-input');
+  const text = input ? input.value.trim() : '';
+  if (!text) return;
+  if (input) input.value = '';
+
+  state.chatHistory.push({ role: 'user', content: text });
+  state.chatThinking = true;
+  rerenderCommanderChat();
+
+  try {
+    const data = await POST('/api/commander/chat', {
+      history: state.chatHistory.slice(0, -1), // history before this message
+      message: text,
+    });
+    state.chatHistory.push({ role: 'commander', content: data.response });
+  } catch (e) {
+    state.chatHistory.push({ role: 'commander', content: '⚠ Error: ' + e.message });
+  } finally {
+    state.chatThinking = false;
+    rerenderCommanderChat();
+  }
+}
+
+function clearChatHistory() {
+  state.chatHistory = [];
+  rerenderCommanderChat();
+}
+
+function rerenderCommanderChat() {
+  // Patch just the chat panel contents without rebuilding the whole modal,
+  // so the textarea focus and Brain tab are undisturbed.
+  const panel = el('commander-chat-panel');
+  if (!panel) { showModalForState(); return; }
+
+  const msgs = state.chatHistory.length === 0
+    ? `<div class="chat-empty">Ask Commander anything about the project, past tasks, or architecture.</div>`
+    : state.chatHistory.map(m => `
+        <div class="chat-msg ${escHtml(m.role)}">
+          <span class="chat-msg-label">${m.role === 'user' ? 'You' : 'Commander'}</span>
+          <div class="chat-msg-body">${escHtml(m.content)}</div>
+        </div>`).join('');
+  const thinking = state.chatThinking
+    ? `<div class="chat-thinking">⠙ Commander is thinking…</div>` : '';
+  const clearBtn = state.chatHistory.length > 0
+    ? `<div style="text-align:right;margin-top:6px;"><button class="btn btn-ghost btn-sm" onclick="clearChatHistory()">Clear history</button></div>` : '';
+
+  panel.innerHTML = `
+    <div class="chat-messages" id="chat-messages">${msgs}${thinking}</div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="Ask Commander anything… (Enter to send, Shift+Enter for newline)"
+        onkeydown="handleChatKey(event)"></textarea>
+      <button class="btn btn-primary" onclick="sendCommanderMessage()" ${state.chatThinking ? 'disabled' : ''}>Send</button>
+    </div>
+    ${clearBtn}
+  `;
+  requestAnimationFrame(scrollChatToBottom);
+}
+
+function scrollChatToBottom() {
+  const msgs = el('chat-messages');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+/* ============================================================
+   INITIALIZATION
+   ============================================================ */
+async function init() {
+  await loadStatus();
+
+  if (state.cluster) {
+    await loadAll();
+    connectSSE();
+  }
+
+  renderApp();
+}
+
+// Start
+init().catch(e => {
+  console.error('Init error:', e);
+  toast('Failed to connect to BORE API', 'error');
+});
+</script>
+</body>
+</html>

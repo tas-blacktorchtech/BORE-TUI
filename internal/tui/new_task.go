@@ -8,6 +8,7 @@ import (
 	"bore-tui/internal/db"
 	"bore-tui/internal/theme"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,6 +31,9 @@ const (
 	newTaskStepForm    = 0
 	newTaskStepConfirm = 1
 )
+
+// promptTextareaHeight is the number of visible lines in the prompt textarea.
+const promptTextareaHeight = 6
 
 // getComplexityOptions returns complexity options mapped to db constants.
 func getComplexityOptions() []string {
@@ -63,8 +67,8 @@ type NewTaskScreen struct {
 	app    *app.App
 	styles theme.Styles
 
-	titleInput  textinput.Model
-	promptInput textinput.Model
+	titleInput   textinput.Model
+	promptInput  textarea.Model
 
 	complexity int // index into complexityOptions
 	mode       int // index into modeOptions
@@ -88,16 +92,17 @@ func NewNewTaskScreen(a *app.App, s theme.Styles) NewTaskScreen {
 	ti.Width = 60
 	ti.Focus()
 
-	pi := textinput.New()
-	pi.Placeholder = "Describe what needs to be done..."
-	pi.CharLimit = 2048
-	pi.Width = 60
+	ta := textarea.New()
+	ta.Placeholder = "Describe what needs to be done..."
+	ta.ShowLineNumbers = false
+	ta.SetWidth(60)
+	ta.SetHeight(promptTextareaHeight)
 
 	return NewTaskScreen{
 		app:         a,
 		styles:      s,
 		titleInput:  ti,
-		promptInput: pi,
+		promptInput: ta,
 	}
 }
 
@@ -113,6 +118,7 @@ func (n *NewTaskScreen) Init() tea.Cmd {
 	n.loaded = false
 	n.statusMsg = ""
 	n.titleInput.Focus()
+	n.promptInput.Blur()
 	return n.loadThreads()
 }
 
@@ -127,6 +133,7 @@ func (n *NewTaskScreen) Update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		n.width = msg.Width
 		n.height = msg.Height
+		n.resizePrompt()
 
 	case ThreadsLoadedMsg:
 		n.threads = msg.Threads
@@ -140,6 +147,11 @@ func (n *NewTaskScreen) Update(msg tea.Msg) tea.Cmd {
 
 	case ErrorMsg:
 		n.statusMsg = fmt.Sprintf("Error: %v", msg.Err)
+
+	case tea.MouseMsg:
+		if n.step == newTaskStepForm {
+			return n.handleMouse(msg)
+		}
 
 	case tea.KeyMsg:
 		if n.step == newTaskStepConfirm {
@@ -156,6 +168,7 @@ func (n *NewTaskScreen) updateForm(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 
 	case "tab":
+		// Always advance focus — never insert a literal tab.
 		n.focus = (n.focus + 1) % 5
 		n.syncFocus()
 		return nil
@@ -208,10 +221,6 @@ func (n *NewTaskScreen) updateForm(msg tea.KeyMsg) tea.Cmd {
 			n.statusMsg = "Prompt is required"
 			return nil
 		}
-		if len(n.threads) == 0 {
-			n.statusMsg = "No threads available - create one first"
-			return nil
-		}
 		n.step = newTaskStepConfirm
 		n.statusMsg = ""
 		return nil
@@ -220,7 +229,7 @@ func (n *NewTaskScreen) updateForm(msg tea.KeyMsg) tea.Cmd {
 		return func() tea.Msg { return NavigateBackMsg{} }
 	}
 
-	// Delegate to focused text input.
+	// Delegate to the focused input.
 	var cmd tea.Cmd
 	switch n.focus {
 	case 0:
@@ -254,6 +263,7 @@ func (n *NewTaskScreen) View(width, height int) string {
 	if width == 0 {
 		return ""
 	}
+	n.resizePrompt()
 
 	header := n.styles.Header.Width(width).Render(" New Task ")
 
@@ -308,14 +318,10 @@ func (n *NewTaskScreen) renderForm() string {
 		"    "+titleStyle.Render(n.titleInput.View()),
 	)
 
-	// Prompt input.
-	promptStyle := n.styles.Input
-	if n.focus == 1 {
-		promptStyle = n.styles.InputFocused
-	}
+	// Prompt textarea.
 	promptSection := lipgloss.JoinVertical(lipgloss.Left,
 		labelStyle.Render("Prompt:"),
-		"    "+promptStyle.Render(n.promptInput.View()),
+		"    "+n.promptInput.View(),
 	)
 
 	// Complexity selector.
@@ -389,7 +395,7 @@ func (n *NewTaskScreen) renderThreadSelector(focused bool) string {
 	if len(n.threads) == 0 {
 		return lipgloss.NewStyle().
 			Foreground(theme.ColorTextSecondary).
-			Render("(no threads available)")
+			Render("General (auto-created)")
 	}
 
 	var parts []string
@@ -487,6 +493,57 @@ func (n *NewTaskScreen) renderConfirm() string {
 }
 
 // ---------------------------------------------------------------------------
+// Mouse handling
+// ---------------------------------------------------------------------------
+
+func (n *NewTaskScreen) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		if n.focus > 0 {
+			n.focus--
+			n.syncFocus()
+		}
+	case msg.Button == tea.MouseButtonWheelDown:
+		if n.focus < 4 {
+			n.focus++
+			n.syncFocus()
+		}
+	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+		// Layout from View/renderForm (row numbers are approximate):
+		// Row 0: header
+		// Row 1: blank
+		// Row 2: "Title:" label
+		// Row 3: title input
+		// Row 4: blank
+		// Row 5: "Prompt:" label
+		// Row 6..5+promptTextareaHeight+1: prompt textarea (border included)
+		// Row after textarea + 1: blank
+		// ...then complexity, mode, thread each 2 rows + 1 blank separator
+		promptStart := 5
+		promptEnd := promptStart + 1 + promptTextareaHeight + 1 // label + textarea (with border)
+		complexityStart := promptEnd + 2
+		modeStart := complexityStart + 3
+		threadStart := modeStart + 3
+
+		y := msg.Y
+		switch {
+		case y >= 2 && y <= 3:
+			n.focus = 0
+		case y >= promptStart && y < promptEnd:
+			n.focus = 1
+		case y >= complexityStart && y < complexityStart+2:
+			n.focus = 2
+		case y >= modeStart && y < modeStart+2:
+			n.focus = 3
+		case y >= threadStart:
+			n.focus = 4
+		}
+		n.syncFocus()
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Focus management
 // ---------------------------------------------------------------------------
 
@@ -501,6 +558,18 @@ func (n *NewTaskScreen) syncFocus() {
 		n.promptInput.Focus()
 	}
 	// Focus 2-4 are selector fields; no text input focus needed.
+}
+
+// resizePrompt adjusts the prompt textarea width to match the current screen width.
+func (n *NewTaskScreen) resizePrompt() {
+	if n.width == 0 {
+		return
+	}
+	w := n.width - 8 // 4 padding left + some right margin
+	if w < 20 {
+		w = 20
+	}
+	n.promptInput.SetWidth(w)
 }
 
 // ---------------------------------------------------------------------------
@@ -540,10 +609,20 @@ func (n *NewTaskScreen) createTask() tea.Cmd {
 		if err != nil {
 			return ErrorMsg{Err: err}
 		}
-		if threadIdx >= len(threads) {
-			return ErrorMsg{Err: fmt.Errorf("selected thread index out of range")}
+		var threadID int64
+		if len(threads) == 0 {
+			// No threads exist — auto-create a "General" thread.
+			t, err := a.DB().CreateThread(context.Background(), cluster.ID, "General", "Default thread")
+			if err != nil {
+				return ErrorMsg{Err: fmt.Errorf("auto-create thread: %w", err)}
+			}
+			threadID = t.ID
+		} else {
+			if threadIdx >= len(threads) {
+				threadIdx = 0
+			}
+			threadID = threads[threadIdx].ID
 		}
-		threadID := threads[threadIdx].ID
 
 		task, err := a.DB().CreateTask(context.Background(),
 			cluster.ID, threadID, title, prompt, complexity, mode)

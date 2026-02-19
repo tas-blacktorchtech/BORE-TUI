@@ -44,3 +44,16 @@ func (r *Repo) Revert(ctx context.Context, dir string, force bool) error {
 func (r *Repo) GetCommitLog(ctx context.Context, dir string, count int) (string, error) {
 	return r.runInDir(ctx, dir, "log", "--oneline", "-n", fmt.Sprintf("%d", count))
 }
+
+// MergeInto checks out targetBranch in the main repo and merges sourceBranch
+// into it using --no-ff to preserve branch history.
+func (r *Repo) MergeInto(ctx context.Context, targetBranch, sourceBranch string) error {
+	if _, err := r.run(ctx, "checkout", targetBranch); err != nil {
+		return fmt.Errorf("git: checkout %s: %w", targetBranch, err)
+	}
+	if _, err := r.run(ctx, "merge", "--no-ff", sourceBranch, "-m",
+		fmt.Sprintf("bore-tui: merge %s into %s", sourceBranch, targetBranch)); err != nil {
+		return fmt.Errorf("git: merge %s: %w", sourceBranch, err)
+	}
+	return nil
+}

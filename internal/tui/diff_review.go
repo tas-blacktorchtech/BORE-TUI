@@ -16,7 +16,8 @@ import (
 
 // Action constants for diff review.
 const (
-	diffActionCommit = iota
+	diffActionMerge = iota // commit + merge into base + clean up (default)
+	diffActionCommit
 	diffActionKeep
 	diffActionRevert
 	diffActionDelete
@@ -106,12 +107,60 @@ func (s DiffReviewScreen) Update(msg tea.Msg) (DiffReviewScreen, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return s.handleKey(msg)
+
+	case tea.MouseMsg:
+		return s.handleMouse(msg)
 	}
 
 	// Forward to viewport for scrolling.
 	var cmd tea.Cmd
 	s.viewport, cmd = s.viewport.Update(msg)
 	return s, cmd
+}
+
+func (s DiffReviewScreen) handleMouse(msg tea.MouseMsg) (DiffReviewScreen, tea.Cmd) {
+	// Scroll wheel: forward to viewport.
+	if tea.MouseEvent(msg).IsWheel() {
+		var cmd tea.Cmd
+		s.viewport, cmd = s.viewport.Update(msg)
+		return s, cmd
+	}
+
+	// Only handle left-button press for clicks.
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return s, nil
+	}
+
+	// If showing result message, click acts like key press to go back.
+	if s.resultMessage != "" {
+		return s, func() tea.Msg { return NavigateBackMsg{} }
+	}
+
+	// Action button bar click: buttons are near the bottom of the view.
+	// The buttons are " Commit ", " Keep ", " Revert ", " Delete " laid out horizontally.
+	// Approximate: the button bar is rendered a few lines from the bottom.
+	// We check if Y is in the lower portion of the screen where buttons render.
+	if s.loaded && !s.confirming {
+		// Button bar is approximately at height - 6 to height - 4 (within the panel).
+		// Use a generous range for the click target.
+		buttonY := s.height - 6
+		if msg.Y >= buttonY-1 && msg.Y <= buttonY+1 {
+			actionLabels := []string{"Commit", "Keep", "Revert", "Delete"}
+			x := msg.X - 1 // account for panel padding
+			cursor := 0
+			for i, label := range actionLabels {
+				// Each button renders as " <label> " so width = len(label) + 2.
+				btnWidth := len(label) + 2
+				if x >= cursor && x < cursor+btnWidth {
+					s.actionCursor = i
+					return s, nil
+				}
+				cursor += btnWidth
+			}
+		}
+	}
+
+	return s, nil
 }
 
 // Internal message for completed actions.
@@ -160,6 +209,12 @@ func (s DiffReviewScreen) handleKey(msg tea.KeyMsg) (DiffReviewScreen, tea.Cmd) 
 			s.confirmAction = s.actionCursor
 			return s, nil
 		}
+		// Merge also requires confirmation (it modifies the base branch).
+		if s.actionCursor == diffActionMerge {
+			s.confirming = true
+			s.confirmAction = s.actionCursor
+			return s, nil
+		}
 		// Non-destructive actions execute immediately.
 		return s, s.executeAction(s.actionCursor)
 	}
@@ -198,6 +253,8 @@ func (s *DiffReviewScreen) executeAction(action int) tea.Cmd {
 	a := s.app
 	exec := s.execution
 	switch action {
+	case diffActionMerge:
+		return s.mergeChanges(a, exec)
 	case diffActionCommit:
 		return s.commitChanges(a, exec)
 	case diffActionKeep:
@@ -208,6 +265,46 @@ func (s *DiffReviewScreen) executeAction(action int) tea.Cmd {
 		return s.deleteWorktree(a, exec)
 	}
 	return nil
+}
+
+func (s *DiffReviewScreen) mergeChanges(a *app.App, exec *db.Execution) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Stage and commit in the worktree.
+		if err := a.Repo().AddAll(ctx, exec.WorktreePath); err != nil {
+			return ErrorMsg{Err: fmt.Errorf("git add: %w", err)}
+		}
+		commitMsg := fmt.Sprintf("bore-tui: execution #%d", exec.ID)
+		if err := a.Repo().Commit(ctx, exec.WorktreePath, commitMsg); err != nil {
+			return ErrorMsg{Err: fmt.Errorf("git commit: %w", err)}
+		}
+
+		// Merge the exec branch into the base branch.
+		baseBranch := exec.BaseBranch
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
+		if err := a.Repo().MergeInto(ctx, baseBranch, exec.ExecBranch); err != nil {
+			return ErrorMsg{Err: fmt.Errorf("git merge: %w", err)}
+		}
+
+		// Clean up: remove worktree and delete the exec branch.
+		if err := a.Repo().RemoveWorktree(ctx, exec.WorktreePath); err != nil {
+			return ErrorMsg{Err: fmt.Errorf("remove worktree: %w", err)}
+		}
+		_ = a.Repo().DeleteBranch(ctx, exec.ExecBranch) // best-effort
+		_ = a.Repo().PruneWorktrees(ctx)
+
+		// Mark execution and task as completed.
+		_ = a.DB().UpdateExecutionStatus(ctx, exec.ID, db.StatusCompleted)
+		_ = a.DB().UpdateTaskStatus(ctx, exec.TaskID, db.StatusCompleted)
+
+		return diffActionDoneMsg{Message: fmt.Sprintf(
+			"Merged %s into %s.\nWorktree and branch cleaned up.",
+			exec.ExecBranch, baseBranch,
+		)}
+	}
 }
 
 func (s *DiffReviewScreen) commitChanges(a *app.App, exec *db.Execution) tea.Cmd {
@@ -225,8 +322,9 @@ func (s *DiffReviewScreen) commitChanges(a *app.App, exec *db.Execution) tea.Cmd
 			return ErrorMsg{Err: fmt.Errorf("git commit: %w", err)}
 		}
 
-		// Update execution status.
+		// Mark execution and task as completed.
 		_ = a.DB().UpdateExecutionStatus(ctx, exec.ID, db.StatusCompleted)
+		_ = a.DB().UpdateTaskStatus(ctx, exec.TaskID, db.StatusCompleted)
 
 		message := fmt.Sprintf(
 			"Changes committed to branch: %s\n\nTo merge: git merge %s",
@@ -250,8 +348,9 @@ func (s *DiffReviewScreen) revertChanges(a *app.App, exec *db.Execution) tea.Cmd
 			return ErrorMsg{Err: fmt.Errorf("git revert: %w", err)}
 		}
 
-		// Mark execution as interrupted (reverted).
+		// Mark execution and task as interrupted (reverted).
 		_ = a.DB().UpdateExecutionStatus(ctx, exec.ID, db.StatusInterrupted)
+		_ = a.DB().UpdateTaskStatus(ctx, exec.TaskID, db.StatusInterrupted)
 
 		return diffActionDoneMsg{Message: "All changes have been reverted."}
 	}
@@ -276,8 +375,9 @@ func (s *DiffReviewScreen) deleteWorktree(a *app.App, exec *db.Execution) tea.Cm
 		// Prune stale worktrees.
 		_ = a.Repo().PruneWorktrees(ctx)
 
-		// Mark execution as interrupted (deleted).
+		// Mark execution and task as interrupted (deleted).
 		_ = a.DB().UpdateExecutionStatus(ctx, exec.ID, db.StatusInterrupted)
+		_ = a.DB().UpdateTaskStatus(ctx, exec.TaskID, db.StatusInterrupted)
 
 		return diffActionDoneMsg{Message: fmt.Sprintf("Worktree and branch %s have been deleted.", exec.ExecBranch)}
 	}
@@ -382,24 +482,24 @@ func (s DiffReviewScreen) renderDiffContent() string {
 }
 
 func (s DiffReviewScreen) renderActionButtons() string {
-	actions := []struct {
-		label string
-		style lipgloss.Style
-	}{
-		{"Commit", s.styles.ButtonFocused},
-		{"Keep", s.styles.Button},
-		{"Revert", s.styles.ButtonDanger},
-		{"Delete", s.styles.ButtonDanger},
+	type actionDef struct{ label string }
+	actions := []actionDef{
+		{"Merge"},   // diffActionMerge
+		{"Commit"},  // diffActionCommit
+		{"Keep"},    // diffActionKeep
+		{"Revert"},  // diffActionRevert
+		{"Delete"},  // diffActionDelete
 	}
 
 	var buttons []string
 	for i, action := range actions {
 		label := fmt.Sprintf(" %s ", action.label)
-		if i == s.actionCursor {
+		switch {
+		case i == s.actionCursor:
 			buttons = append(buttons, s.styles.ButtonFocused.Render(label))
-		} else if i == diffActionRevert || i == diffActionDelete {
+		case i == diffActionRevert || i == diffActionDelete:
 			buttons = append(buttons, s.styles.ButtonDanger.Render(label))
-		} else {
+		default:
 			buttons = append(buttons, s.styles.Button.Render(label))
 		}
 	}
@@ -408,7 +508,13 @@ func (s DiffReviewScreen) renderActionButtons() string {
 }
 
 func (s DiffReviewScreen) renderConfirmation() string {
-	actionNames := []string{"commit", "keep", "revert all changes", "delete worktree and branch"}
+	actionNames := []string{
+		"merge into base branch and clean up",
+		"commit to exec branch",
+		"keep changes",
+		"revert all changes",
+		"delete worktree and branch",
+	}
 	name := "perform action"
 	if s.confirmAction >= 0 && s.confirmAction < len(actionNames) {
 		name = actionNames[s.confirmAction]

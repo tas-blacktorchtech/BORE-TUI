@@ -584,6 +584,57 @@ func (d *DB) ListTasksByStatus(ctx context.Context, clusterID int64, status stri
 	return collectTasks(rows)
 }
 
+// TaskHistoryEntry holds a task title/prompt/status paired with its boss summary outcome.
+// Used to give the Commander a complete view of what has been done.
+type TaskHistoryEntry struct {
+	TaskID       int64
+	Title        string
+	Prompt       string
+	Status       string
+	Outcome      string // boss summarizer outcome: success/partial/failed or empty
+	WhatChanged  string // boss summarizer summary text or empty
+	FilesChanged string // comma-separated files touched
+}
+
+// ListTaskHistories returns up to 20 most recent tasks for a cluster, each joined
+// with the boss summarizer outcome from the task's most recent execution (if any).
+func (d *DB) ListTaskHistories(ctx context.Context, clusterID int64) ([]TaskHistoryEntry, error) {
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT
+			t.id,
+			t.title,
+			t.prompt,
+			t.status,
+			COALESCE(ar.outcome, '')       AS outcome,
+			COALESCE(ar.summary, '')       AS what_changed,
+			COALESCE(ar.files_changed, '') AS files_changed
+		FROM tasks t
+		LEFT JOIN executions e
+			ON e.task_id = t.id
+			AND e.id = (SELECT MAX(e2.id) FROM executions e2 WHERE e2.task_id = t.id)
+		LEFT JOIN agent_runs ar
+			ON ar.execution_id = e.id AND ar.role = 'summarizer'
+		WHERE t.cluster_id = ?
+		ORDER BY t.created_at DESC
+		LIMIT 20
+	`, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("list task histories: %w", err)
+	}
+	defer rows.Close()
+
+	var out []TaskHistoryEntry
+	for rows.Next() {
+		var e TaskHistoryEntry
+		if err := rows.Scan(&e.TaskID, &e.Title, &e.Prompt, &e.Status,
+			&e.Outcome, &e.WhatChanged, &e.FilesChanged); err != nil {
+			return nil, fmt.Errorf("scan task history: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // UpdateTaskStatus changes a task's status.
 func (d *DB) UpdateTaskStatus(ctx context.Context, id int64, status string) error {
 	if !ValidTaskStatus(status) {

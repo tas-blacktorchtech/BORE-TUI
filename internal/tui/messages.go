@@ -12,7 +12,9 @@ const (
 	ScreenHome             Screen = iota
 	ScreenCreateCluster
 	ScreenDashboard
+	ScreenCommanderDashboard
 	ScreenCommanderBuilder
+	ScreenCommanderChat
 	ScreenCrewManager
 	ScreenNewTask
 	ScreenCommanderReview
@@ -130,3 +132,13 @@ type DiffLoadedMsg struct {
 
 // TickMsg is sent on a periodic interval for spinner/animation updates.
 type TickMsg struct{}
+
+// WebServerStartedMsg is sent when the web GUI server has started successfully.
+type WebServerStartedMsg struct {
+	URL string
+}
+
+// WebServerErrorMsg is sent when the web GUI server fails to start.
+type WebServerErrorMsg struct {
+	Err error
+}
